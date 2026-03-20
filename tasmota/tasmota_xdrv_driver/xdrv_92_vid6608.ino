@@ -86,6 +86,38 @@
   #define VID6608_RESET_ON_INIT  true
 #endif
 
+/**
+ * @brief Defaine steps range
+ *
+ * Some drives can have another steps scale:
+ * Common X27-168: 320° * 12 steps
+ * Bi-Axial BKA30D-R5:
+ * Inner: 320° * 12 steps
+ * Outer: 275° * 12 steps
+ *
+ * Use defines VID6608_STEPS_X to configure steps range per-drive
+ */
+
+#ifndef VID6608_STEPS_DEFAULT
+  #define VID6608_STEPS_DEFAULT 320 * 12
+#endif
+
+#ifndef VID6608_STEPS_1
+  #define VID6608_STEPS_1 VID6608_STEPS_DEFAULT
+#endif
+
+#ifndef VID6608_STEPS_2
+  #define VID6608_STEPS_2 VID6608_STEPS_DEFAULT
+#endif
+
+#ifndef VID6608_STEPS_3
+  #define VID6608_STEPS_3 VID6608_STEPS_DEFAULT
+#endif
+
+#ifndef VID6608_STEPS_4
+  #define VID6608_STEPS_4 VID6608_STEPS_DEFAULT
+#endif
+
 #include "vid6608.h"
 
 /**
@@ -135,6 +167,13 @@ vid6608 *vid6608Drives[VID6608_MAX_DRIVES];
   #define VID6608_MUTEX_TAKE
   #define VID6608_MUTEX_GIVE
 #endif
+
+const uint16_t vid6608MaxSteps[] PROGMEM = {
+    VID6608_STEPS_1,
+    VID6608_STEPS_2,
+    VID6608_STEPS_3,
+    VID6608_STEPS_4,
+};
 
 /**
  * @brief Command Gauge
@@ -294,7 +333,7 @@ void VID6608Init() {
       uint32_t pinStep = Pin(GPIO_VID6608_F, x);
       uint32_t pinDir = Pin(GPIO_VID6608_CW, x);
       AddLog(LOG_LEVEL_DEBUG, PSTR("VID: detected drive %d at pin %d, %d"), x, pinStep, pinDir);
-      vid6608Drives[x] = new vid6608(pinStep, pinDir);
+      vid6608Drives[x] = new vid6608(pinStep, pinDir, vid6608MaxSteps[x]);
 
       // Perform homing operation
       if (VID6608_RESET_ON_INIT) {
