@@ -27,6 +27,9 @@
 
 #define XDRV_110 110
 
+#define GALOPED_STRINGIFY_(x) #x
+#define GALOPED_STRINGIFY(x) GALOPED_STRINGIFY_(x)
+
 #define WEB_HANDLE_GALOPED "galoped"
 
 #define GALOPED_INFO_MAX_LINE 32
@@ -223,6 +226,9 @@ void GalopedPage(void) {
       WSContentSeparatorIThin();
     }
     WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Serial number" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.serial);
+#if defined(GALOPED_VERSION)
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID GALOPED_STRINGIFY(GALOPED_VERSION) TABLE_INFO_ROW_END));
+#endif
     if (strlen(galoped_info.display)) {
       WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Display" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.display);
     }
