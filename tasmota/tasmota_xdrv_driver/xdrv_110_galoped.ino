@@ -36,11 +36,6 @@
 #include "mbedtls/pk.h"
 #include "mbedtls/sha256.h"
 
-// Default values (used when info file is missing or invalid)
-const char* galopedSerialDefault = "000";
-const char* galopedDisplayDefault = "Unknown";
-const char* galopedColorDefault = "Unknown";
-
 #define TABLE_INFO_ROW_START "<tr><th>"
 #define TABLE_INFO_ROW_MID "</th><td>"
 #define TABLE_INFO_ROW_END "</td></tr>"
@@ -50,13 +45,15 @@ struct GalopedInfo {
   char display[GALOPED_INFO_MAX_LINE];
   char color[GALOPED_INFO_MAX_LINE];
   char backlight[GALOPED_INFO_MAX_LINE];
+  char assembled[GALOPED_INFO_MAX_LINE];
+  char personal[GALOPED_INFO_MAX_LINE];
   char mac[GALOPED_INFO_MAX_LINE];
   bool loaded;
   bool valid;
   bool mac_match;
 };
 
-static GalopedInfo galoped_info = { "", "", "", "", "", false, false, false };
+static GalopedInfo galoped_info = { "", "", "", "", "", "", "", false, false, false };
 
 struct RsaVerifyResult {
   bool ok;
@@ -167,6 +164,8 @@ static void GalopedReadInfoFile(void) {
   ini.getValueStr("galoped", "display", galoped_info.display, GALOPED_INFO_MAX_LINE);
   ini.getValueStr("galoped", "color", galoped_info.color, GALOPED_INFO_MAX_LINE);
   ini.getValueStr("galoped", "backlight", galoped_info.backlight, GALOPED_INFO_MAX_LINE);
+  ini.getValueStr("galoped", "assembled", galoped_info.assembled, GALOPED_INFO_MAX_LINE);
+  ini.getValueStr("galoped", "personal", galoped_info.personal, GALOPED_INFO_MAX_LINE);
   ini.getValueStr("galoped", "mac", galoped_info.mac, GALOPED_INFO_MAX_LINE);
   ini_file.close();
 
@@ -218,11 +217,31 @@ void GalopedPage(void) {
     WSContentSend_P(PSTR("<div style='padding:5px;text-align:center;'><b style='color:red'>Device information not available</b><br/><br/>%s</div>"), error_msg);
   } else {
     WSContentSend_P(PSTR(HTTP_TABLE100));
+
+    if (strlen(galoped_info.personal)) {
+      WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Built for" TABLE_INFO_ROW_MID "<b style='color:gold'>%s<b>" TABLE_INFO_ROW_END), galoped_info.personal);
+      WSContentSeparatorIThin();
+    }
     WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Serial number" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.serial);
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Display" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.display);
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Color" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.color);
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Backlight" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.backlight);
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>VALID</b>" TABLE_INFO_ROW_END));
+    if (strlen(galoped_info.display)) {
+      WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Display" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.display);
+    }
+    if (strlen(galoped_info.backlight)) {
+      WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Backlight" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.backlight);
+    }
+    if (strlen(galoped_info.assembled)) {
+      WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Assembled" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.assembled);
+    }
+    if (strlen(galoped_info.color)) {
+      const char* color_style = "";
+      if (strcmp(galoped_info.color, "white") == 0) {
+        color_style = "color:black;background-color:white;";
+      } else if (strcmp(galoped_info.color, "black") == 0) {
+        color_style = "color:white;background-color:black;";
+      }
+      WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Color" TABLE_INFO_ROW_MID "<span style='border:1px solid #666;padding:3px;%s'>%s</div>" TABLE_INFO_ROW_END), color_style, galoped_info.color);
+    }
+    // WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>OK</b>" TABLE_INFO_ROW_END));
     WSContentSeparatorIThin();
     WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Chipset" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GetDeviceHardwareRevision().c_str());
     if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
@@ -233,7 +252,7 @@ void GalopedPage(void) {
     WSContentSend_P(PSTR("</table>"));
   }
   // Page bottom
-  WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='https://gp.petro.ws/'>Galoped homepage</a></p>"));
+  WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='https://gp.petro.ws/' target='_blank'>Galoped homepage</a></p>"));
   WSContentSpaceButton(BUTTON_MAIN);
   WSContentStop();
 }
