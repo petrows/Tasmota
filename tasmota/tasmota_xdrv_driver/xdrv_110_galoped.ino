@@ -207,6 +207,8 @@ void GalopedPage(void) {
   // Data and sig valid?
   bool all_ok = galoped_info.valid && galoped_info.mac_match;
 
+  WSContentSend_P(PSTR(HTTP_TABLE100));
+
   if (!all_ok) {
     // Information page error: display error and exit
     const char* error_msg = "Unknown error";
@@ -217,18 +219,13 @@ void GalopedPage(void) {
     } else if (!galoped_info.valid) {
       error_msg = "Invalid device signature";
     }
-    WSContentSend_P(PSTR("<div style='padding:5px;text-align:center;'><b style='color:red'>Device information not available</b><br/><br/>%s</div>"), error_msg);
+    WSContentSend_P(PSTR("<tr><td><div style='padding:5px;text-align:center;'><b style='color:red'>Device information not available</b><br/><br/>%s</div></td></tr>"), error_msg);
   } else {
-    WSContentSend_P(PSTR(HTTP_TABLE100));
-
     if (strlen(galoped_info.personal)) {
       WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Built for" TABLE_INFO_ROW_MID "<b style='color:gold'>%s<b>" TABLE_INFO_ROW_END), galoped_info.personal);
       WSContentSeparatorIThin();
     }
     WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Serial number" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.serial);
-#if defined(GALOPED_VERSION)
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID GALOPED_STRINGIFY(GALOPED_VERSION) TABLE_INFO_ROW_END));
-#endif
     if (strlen(galoped_info.display)) {
       WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Display" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.display);
     }
@@ -247,16 +244,20 @@ void GalopedPage(void) {
       }
       WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Color" TABLE_INFO_ROW_MID "<span style='border:1px solid #666;padding:3px;%s'>%s</div>" TABLE_INFO_ROW_END), color_style, galoped_info.color);
     }
-    // WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>OK</b>" TABLE_INFO_ROW_END));
-    WSContentSeparatorIThin();
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Chipset" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GetDeviceHardwareRevision().c_str());
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_MAC_ADDRESS TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), WiFiHelper::macAddress().c_str());
-    if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
-      WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_IP_ADDRESS TABLE_INFO_ROW_MID "%_I" TABLE_INFO_ROW_END), (uint32_t)WiFi.localIP());
-      WSContentSeparatorIThin();
-    }
-    WSContentSend_P(PSTR("</table>"));
+  } // End signed block
+  WSContentSeparatorIThin();
+  // WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>OK</b>" TABLE_INFO_ROW_END));
+#if defined(GALOPED_VERSION)
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID GALOPED_STRINGIFY(GALOPED_VERSION) TABLE_INFO_ROW_END));
+#endif
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Chipset" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GetDeviceHardwareRevision().c_str());
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_MAC_ADDRESS TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), WiFiHelper::macAddress().c_str());
+  if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_IP_ADDRESS TABLE_INFO_ROW_MID "%_I" TABLE_INFO_ROW_END), (uint32_t)WiFi.localIP());
   }
+  WSContentSeparatorIThin();
+  WSContentSend_P(PSTR("</table>"));
+
   // Page bottom
   WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='https://gp.petro.ws/?mac=%s' target='_blank'>Galoped homepage</a></p>"), WiFiHelper::macAddress().c_str());
   WSContentSpaceButton(BUTTON_MAIN);
