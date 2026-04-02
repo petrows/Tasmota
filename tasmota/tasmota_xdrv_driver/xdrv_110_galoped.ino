@@ -21,13 +21,20 @@
 
 #ifdef USE_GALOPED
 
+#ifndef ESP32
+#error "Galoped supports the ESP-32 only"
+#endif
+
 #define XDRV_110 110
 
 #define WEB_HANDLE_GALOPED "galoped"
 
-#define GALOPED_INFO_FILE "/galoped.inf"
-#define GALOPED_INFO_MAX_LINE 256
+#define GALOPED_INFO_MAX_LINE 32
 #define GALOPED_INFO_NUM_FIELDS 5
+
+#include "IniFile.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/sha256.h"
 
 // Default values (used when info file is missing or invalid)
 const char* galopedSerialDefault = "000";
@@ -42,8 +49,8 @@ struct GalopedInfo {
   char serial[GALOPED_INFO_MAX_LINE];
   char display[GALOPED_INFO_MAX_LINE];
   char color[GALOPED_INFO_MAX_LINE];
+  char backlight[GALOPED_INFO_MAX_LINE];
   char mac[GALOPED_INFO_MAX_LINE];
-  char signature[GALOPED_INFO_MAX_LINE];
   bool loaded;
   bool valid;
   bool mac_match;
@@ -51,53 +58,96 @@ struct GalopedInfo {
 
 static GalopedInfo galoped_info = { "", "", "", "", "", false, false, false };
 
-// Public key for signature verification
-#define GALOPED_SIG_E 17
-#define GALOPED_SIG_N 3233
+struct RsaVerifyResult {
+  bool ok;
+  char message[128];
+};
 
-// Modular exponentiation: (base ^ exp) mod mod
-static uint32_t GalopedModPow(uint32_t base, uint32_t exp, uint32_t mod) {
-  uint64_t result = 1;
-  uint64_t b = base % mod;
-  while (exp > 0) {
-    if (exp & 1) {
-      result = (result * b) % mod;
+static RsaVerifyResult galoped_sign = { false, "" };
+
+// Verify RSA/PKCS#1 signature of a file using mbedtls (ESP32 hardware-accelerated).
+//   data_filename   – path on LittleFS to the file being verified
+//   sig_filename    – path on LittleFS to the binary DER-encoded signature file
+// Returns RsaVerifyResult { ok=true, message="OK" } on success, or
+//   { ok=false, message="<description>" } on any failure.
+static bool GalopedVerifyRsaFileSignature(
+    const char* data_filename,
+    const char* sig_filename)
+{
+  int ret;
+  galoped_sign.ok = false;
+
+  // --- Parse public key ---
+  mbedtls_pk_context pk;
+  mbedtls_pk_init(&pk);
+  // mbedtls PEM parser requires the null terminator to be included in the length
+  ret = mbedtls_pk_parse_public_key(&pk,
+      (unsigned char*)Galoped_sig_pub,
+      Galoped_sig_pub_len);
+  if (ret != 0) {
+    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Public key parse failed: -0x%04X", (unsigned)(-ret));
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  // --- Compute SHA-256 of the data file ---
+  File data_file = LittleFS.open(data_filename, "r");
+  if (!data_file) {
+    strlcpy(galoped_sign.message, "Data file not found", sizeof(galoped_sign.message));
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  mbedtls_sha256_context sha_ctx;
+  mbedtls_sha256_init(&sha_ctx);
+  mbedtls_sha256_starts(&sha_ctx, 0);   // 0 = SHA-256 (not SHA-224)
+
+  uint8_t io_buf[512];
+  while (data_file.available()) {
+    size_t n = data_file.read(io_buf, sizeof(io_buf));
+    if (n > 0) {
+      mbedtls_sha256_update(&sha_ctx, io_buf, n);
     }
-    exp >>= 1;
-    b = (b * b) % mod;
   }
-  return (uint32_t)result;
-}
+  data_file.close();
 
-// Simple hash of a string to a value in range [0, mod)
-static uint32_t GalopedHash(const char* data, uint32_t mod) {
-  uint32_t hash = 5381;
-  while (*data) {
-    hash = ((hash << 5) + hash) + (uint8_t)(*data);
-    data++;
-  }
-  return hash % mod;
-}
+  uint8_t hash[32];
+  mbedtls_sha256_finish(&sha_ctx, hash);
+  mbedtls_sha256_free(&sha_ctx);
 
-// Verify signature against serial|display|color|mac
-static bool GalopedVerifySignature(const char* serial, const char* display,
-                                   const char* color, const char* mac,
-                                   const char* signature_str) {
-  // Build message: "serial|display|color|mac"
-  char message[GALOPED_INFO_MAX_LINE * 4 + 4];
-  snprintf(message, sizeof(message), "%s|%s|%s|%s", serial, display, color, mac);
-
-  uint32_t message_hash = GalopedHash(message, GALOPED_SIG_N);
-
-  // Parse signature as decimal number
-  uint32_t sig = strtoul(signature_str, nullptr, 10);
-  if (sig == 0 && signature_str[0] != '0') {
-    return false;  // Invalid signature string
+  // --- Read the signature file ---
+  File sig_file = LittleFS.open(sig_filename, "r");
+  if (!sig_file) {
+    strlcpy(galoped_sign.message, "Signature file not found", sizeof(galoped_sign.message));
+    mbedtls_pk_free(&pk);
+    return false;
   }
 
-  // Verify: (sig ^ e) mod n == message_hash
-  uint32_t recovered = GalopedModPow(sig, GALOPED_SIG_E, GALOPED_SIG_N);
-  return recovered == message_hash;
+  size_t sig_len = sig_file.size();
+  // RSA-4096 produces 512-byte signatures; reject obviously invalid sizes
+  if (sig_len == 0 || sig_len > 512) {
+    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Signature file has invalid size: %u", (unsigned)sig_len);
+    sig_file.close();
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  uint8_t sig_buf[512];
+  sig_file.read(sig_buf, sig_len);
+  sig_file.close();
+
+  // --- Verify signature ---
+  ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig_buf, sig_len);
+  mbedtls_pk_free(&pk);
+
+  if (ret != 0) {
+    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Signature invalid: -0x%04X", (unsigned)(-ret));
+    return false;
+  }
+
+  galoped_sign.ok = true;
+  strlcpy(galoped_sign.message, "OK", sizeof(galoped_sign.message));
+  return true;
 }
 
 // Read the information file and verify signature
@@ -105,50 +155,23 @@ static void GalopedReadInfoFile(void) {
   galoped_info.loaded = false;
   galoped_info.valid = false;
 
-  String content = TfsLoadString(GALOPED_INFO_FILE);
-  if (content.length() == 0) {
-    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Info file '%s' not found or empty"), GALOPED_INFO_FILE);
+  GalopedVerifyRsaFileSignature("/galoped.ini", "/galoped.sig");
+
+  File ini_file = LittleFS.open("/galoped.ini", "r");
+  if (!ini_file) {
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Info file read error"));
     return;
   }
+  IniFile ini(ini_file);
+  ini.getValueStr("galoped", "serial", galoped_info.serial, GALOPED_INFO_MAX_LINE);
+  ini.getValueStr("galoped", "display", galoped_info.display, GALOPED_INFO_MAX_LINE);
+  ini.getValueStr("galoped", "color", galoped_info.color, GALOPED_INFO_MAX_LINE);
+  ini.getValueStr("galoped", "backlight", galoped_info.backlight, GALOPED_INFO_MAX_LINE);
+  ini.getValueStr("galoped", "mac", galoped_info.mac, GALOPED_INFO_MAX_LINE);
+  ini_file.close();
 
-  char* fields[GALOPED_INFO_NUM_FIELDS] = {
-    galoped_info.serial,
-    galoped_info.display,
-    galoped_info.color,
-    galoped_info.mac,
-    galoped_info.signature
-  };
-
-  // Parse lines from loaded string
-  uint32_t field_idx = 0;
-  int start = 0;
-  while (field_idx < GALOPED_INFO_NUM_FIELDS && start <= (int)content.length()) {
-    int end = content.indexOf('\n', start);
-    if (end < 0) { end = content.length(); }
-    String line = content.substring(start, end);
-    line.trim();
-    start = end + 1;
-    if (line.length() == 0) { continue; }
-    if (line.length() >= GALOPED_INFO_MAX_LINE) {
-      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Line %d too long"), field_idx + 1);
-      return;
-    }
-    strlcpy(fields[field_idx], line.c_str(), GALOPED_INFO_MAX_LINE);
-    field_idx++;
-  }
-
-  if (field_idx < GALOPED_INFO_NUM_FIELDS) {
-    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Info file incomplete (%d/%d fields)"), field_idx, GALOPED_INFO_NUM_FIELDS);
-    return;
-  }
-
+  galoped_info.valid = galoped_sign.ok;
   galoped_info.loaded = true;
-
-  // Verify signature
-  galoped_info.valid = GalopedVerifySignature(
-    galoped_info.serial, galoped_info.display,
-    galoped_info.color, galoped_info.mac, galoped_info.signature
-  );
 
   // Check MAC address matches device
   galoped_info.mac_match = (strcasecmp(galoped_info.mac, WiFiHelper::macAddress().c_str()) == 0);
@@ -165,54 +188,52 @@ static void GalopedReadInfoFile(void) {
 
 #ifdef USE_WEBSERVER
 
-void HandleGaloped(void) {
+void GalopedPage(void) {
   if (!HttpCheckPriviledgedAccess()) { return; }
 
   AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP "Galoped"));
 
   // Re-read info file on each page load to pick up changes
-  GalopedReadInfoFile();
-
-  const char* serial = galoped_info.loaded ? galoped_info.serial : galopedSerialDefault;
-  const char* display = galoped_info.loaded ? galoped_info.display : galopedDisplayDefault;
-  const char* color = galoped_info.loaded ? galoped_info.color : galopedColorDefault;
+  if (!galoped_info.loaded) {
+    GalopedReadInfoFile();
+  }
 
   WSContentStart_P(PSTR("Galoped"));
   WSContentSendStyle();
   WSContentSend_P(HTTP_MENU_HEAD, "Galoped info");
-  WSContentSend_P(PSTR("<table style=\"width:100%%\">"));
-  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Serial number" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), serial);
-  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Display" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), display);
-  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Color" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), color);
-  if (galoped_info.loaded) {
-    const char* mac_style = galoped_info.mac_match
-      ? "color:green;font-weight:bold"
-      : "color:red;font-weight:bold";
-    const char* mac_status = galoped_info.mac_match ? " (OK)" : " (MISMATCH)";
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "MAC (info)" TABLE_INFO_ROW_MID "%s <span style=\"%s\">%s</span>" TABLE_INFO_ROW_END),
-                    galoped_info.mac, mac_style, mac_status);
-  }
-  WSContentSeparatorIThin();
 
-  // Signature status
-  if (galoped_info.loaded) {
-    bool all_ok = galoped_info.valid && galoped_info.mac_match;
-    const char* status = all_ok ? "OK" : "INVALID";
-    const char* style = all_ok
-      ? "color:green;font-weight:bold"
-      : "color:red;font-weight:bold";
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<span style=\"%s\">%s</span>" TABLE_INFO_ROW_END), style, status);
+  // Data and sig valid?
+  bool all_ok = galoped_info.valid && galoped_info.mac_match;
+
+  if (!all_ok) {
+    // Information page error: display error and exit
+    const char* error_msg = "Unknown error";
+    if (!galoped_info.loaded) {
+      error_msg = "Info read error";
+    } else if (!galoped_info.mac_match) {
+      error_msg = "Invalid device MAC address";
+    } else if (!galoped_info.valid) {
+      error_msg = "Invalid device signature";
+    }
+    WSContentSend_P(PSTR("<div style='padding:5px;text-align:center;'><b style='color:red'>Device information not available</b><br/><br/>%s</div>"), error_msg);
   } else {
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<span style=\"color:orange\">No info file</span>" TABLE_INFO_ROW_END));
-  }
-  WSContentSeparatorIThin();
-
-  if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_MAC_ADDRESS TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), WiFiHelper::macAddress().c_str());
-    WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_IP_ADDRESS TABLE_INFO_ROW_MID "%_I" TABLE_INFO_ROW_END), (uint32_t)WiFi.localIP());
+    WSContentSend_P(PSTR(HTTP_TABLE100));
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Serial number" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.serial);
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Display" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.display);
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Color" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.color);
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Backlight" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_info.backlight);
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>VALID</b>" TABLE_INFO_ROW_END));
     WSContentSeparatorIThin();
+    WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Chipset" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GetDeviceHardwareRevision().c_str());
+    if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
+      WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_MAC_ADDRESS TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), WiFiHelper::macAddress().c_str());
+      WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_IP_ADDRESS TABLE_INFO_ROW_MID "%_I" TABLE_INFO_ROW_END), (uint32_t)WiFi.localIP());
+      WSContentSeparatorIThin();
+    }
+    WSContentSend_P(PSTR("</table>"));
   }
-  WSContentSend_P(PSTR("</table>"));
+  // Page bottom
+  WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='https://gp.petro.ws/'>Galoped homepage</a></p>"));
   WSContentSpaceButton(BUTTON_MAIN);
   WSContentStop();
 }
@@ -237,7 +258,7 @@ bool Xdrv110(uint32_t function) {
 
 #ifdef USE_WEBSERVER
     case FUNC_WEB_ADD_HANDLER:
-      WebServer_on(PSTR("/" WEB_HANDLE_GALOPED), HandleGaloped);
+      WebServer_on(PSTR("/" WEB_HANDLE_GALOPED), GalopedPage);
       break;
 
     case FUNC_WEB_ADD_MAIN_BUTTON:
