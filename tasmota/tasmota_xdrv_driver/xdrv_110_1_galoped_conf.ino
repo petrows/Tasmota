@@ -34,7 +34,6 @@
 #define GALOPED_INFO_NUM_FIELDS 5
 
 #include "IniFile.h"
-#include "vid6608.h"
 
 #define WEB_HANDLE_GALOPED_CFG "galopcfg"
 
@@ -315,27 +314,49 @@ void GalopedInit(void) {
   GalopedReadInfoFile();
 }
 
-// Returns HTML color string like "#00FF00" transitioning green → yellow → red
-// buf must be at least 8 bytes
-void GalopedColorGYR(char *buf, float value, float min_val, float max_val) {
+// Returns Hue (0-360) for green→yellow→red transition
+// 0.0 ratio = green (120°), 0.5 = yellow (60°), 1.0 = red (0°)
+uint16_t GalopedColorGYR(float value, float min_val, float max_val) {
   float ratio = (value - min_val) / (max_val - min_val);
   if (ratio < 0.0f) ratio = 0.0f;
   if (ratio > 1.0f) ratio = 1.0f;
-
-  uint8_t red, green;
-  if (ratio <= 0.5f) {
-    red = (uint8_t)(255.0f * ratio * 2.0f);
-    green = 255;
-  } else {
-    red = 255;
-    green = (uint8_t)(255.0f * (1.0f - ratio) * 2.0f);
-  }
-
-  snprintf(buf, 8, "%02X%02X00", red, green);
+  return (uint16_t)(120.0f * (1.0f - ratio));
 }
 
-// External drives
-extern vid6608 *vid6608Drives[4];
+// Convert Hue (0-360) to RGB with given brightness (0-255)
+void GalopedHueToRGB(uint16_t hue, uint8_t brightness, uint8_t *r, uint8_t *g, uint8_t *b) {
+  // HSV to RGB with S=100%, V=brightness
+  float h = (float)hue / 60.0f;
+  float v = (float)brightness / 255.0f;
+  int i = (int)h;
+  float f = h - i;
+  uint8_t q = (uint8_t)(brightness * (1.0f - f));
+  uint8_t t = (uint8_t)(brightness * f);
+  switch (i % 6) {
+    case 0: *r = brightness; *g = t;          *b = 0; break;
+    case 1: *r = q;          *g = brightness; *b = 0; break;
+    case 2: *r = 0;          *g = brightness; *b = t; break;
+    case 3: *r = 0;          *g = q;          *b = brightness; break;
+    case 4: *r = t;          *g = 0;          *b = brightness; break;
+    case 5: *r = brightness; *g = 0;          *b = q; break;
+  }
+}
+
+// Set static green-yellow-red gradient on addressable LEDs, preserving user brightness
+void GalopedSetGradient(void) {
+  uint32_t num_pixels = Ws2812PixelCount();
+  if (num_pixels == 0) return;
+
+  uint8_t brightness = changeUIntScale(Settings->light_dimmer, 0, 100, 0, 255);
+  for (uint32_t i = 0; i < num_pixels; i++) {
+    uint16_t hue = (uint16_t)(120.0f * (1.0f - (float)i / (float)(num_pixels - 1)));
+    uint8_t r, g, b;
+    GalopedHueToRGB(hue, brightness, &r, &g, &b);
+    Ws2812SetPixelColor(i, r, g, b, 0);
+  }
+  Ws2812ForceUpdate();
+  Ws2812Show();
+}
 
 // External sensors data
 // CO2
@@ -347,6 +368,14 @@ void GalopedLoop(void) {
   // In not (yet) init -> exit
   if (!galoped_info.loaded) {
     return;
+  }
+
+  // Check if Light1 is on
+  bool light_on = bitRead(TasmotaGlobal.power, Light.device - 1);
+
+  // Apply gradient when mode is active and light is on
+  if (light_on && GALOPED_RGB_GRADIENT == galoped_settings.rgb_mode) {
+    GalopedSetGradient();
   }
 
   // CO2 device?
@@ -368,11 +397,10 @@ void GalopedLoop(void) {
       snprintf_P(buf, buf_size, PSTR("GaugeSet1 %d"), drive_pos);
       ExecuteCommand(buf, SRC_SENSOR);
 
-      // Update Backlight?
-      if (GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
-        char color[8];
-        GalopedColorGYR(color, (float)galoped_value_co2, 400, 2200);
-        snprintf_P(buf, buf_size, PSTR("Color1 %s"), color);
+      // Update Backlight color (hue only, preserving user brightness)
+      if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
+        uint16_t hue = GalopedColorGYR((float)galoped_value_co2, 400, 2200);
+        snprintf_P(buf, buf_size, PSTR("HSBColor %d,100"), hue);
         ExecuteCommand(buf, SRC_SENSOR);
       }
     }
