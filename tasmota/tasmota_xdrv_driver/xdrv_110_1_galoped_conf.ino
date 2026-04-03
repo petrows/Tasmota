@@ -347,8 +347,22 @@ void GalopedSetGradient(void) {
   if (num_pixels == 0) return;
 
   uint8_t brightness = changeUIntScale(Settings->light_dimmer, 0, 100, 0, 255);
+
+  // 30% solid green at the start, 30% solid red at the end, gradient in between
+  uint32_t green_end = num_pixels * 30 / 100;          // first 30% = solid green
+  uint32_t red_start = num_pixels - num_pixels * 30 / 100; // last 30% = solid red
+  uint32_t grad_len = red_start - green_end;            // middle = gradient
+
   for (uint32_t i = 0; i < num_pixels; i++) {
-    uint16_t hue = (uint16_t)(120.0f * (1.0f - (float)i / (float)(num_pixels - 1)));
+    uint16_t hue;
+    if (i < green_end) {
+      hue = 120;  // solid green
+    } else if (i >= red_start) {
+      hue = 0;    // solid red
+    } else {
+      // gradient from green (120) to red (0)
+      hue = (uint16_t)(120.0f * (1.0f - (float)(i - green_end) / (float)(grad_len - 1)));
+    }
     uint8_t r, g, b;
     GalopedHueToRGB(hue, brightness, &r, &g, &b);
     Ws2812SetPixelColor(i, r, g, b, 0);
