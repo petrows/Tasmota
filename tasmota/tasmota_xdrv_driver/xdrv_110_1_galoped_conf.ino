@@ -25,9 +25,6 @@
 
 #ifdef USE_GALOPED
 
-#define GALOPED_STRINGIFY_(x) #x
-#define GALOPED_STRINGIFY(x) GALOPED_STRINGIFY_(x)
-
 #define WEB_HANDLE_GALOPED "galoped"
 
 #define GALOPED_INFO_MAX_LINE 32
@@ -248,9 +245,7 @@ void GalopedPage(void) {
   } // End signed block
   WSContentSeparatorIThin();
   // WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>OK</b>" TABLE_INFO_ROW_END));
-#if defined(GALOPED_VERSION)
-  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID GALOPED_STRINGIFY(GALOPED_VERSION) TABLE_INFO_ROW_END));
-#endif
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GalopedFwVerion());
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Chipset" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GetDeviceHardwareRevision().c_str());
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_MAC_ADDRESS TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), WiFiHelper::macAddress().c_str());
   if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
@@ -312,6 +307,10 @@ void GalopedConfigPage(void) {
 void GalopedInit(void) {
   // Load primary settings file and init
   GalopedReadInfoFile();
+
+  // Reset drivers
+  // FIXME: Be more smart and use FRAM
+  ExecuteCommand("GaugeZero0 50", SRC_SENSOR);
 }
 
 // Returns Hue (0-360) for green→yellow→red transition
