@@ -281,6 +281,9 @@ bool Xsns17(uint32_t function)
 #endif  // USE_WEBSERVER
       SenseairShow(function);
       break;
+    case FUNC_EVERY_SECOND:
+      GalopedLoop();
+      break;
   }
   return false;
 }

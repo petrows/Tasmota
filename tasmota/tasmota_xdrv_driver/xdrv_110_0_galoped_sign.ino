@@ -21,6 +21,11 @@
 
 #ifdef USE_GALOPED
 
+#define XDRV_110 110
+
+#include "mbedtls/pk.h"
+#include "mbedtls/sha256.h"
+
 // array size is 550
 size_t Galoped_sig_pub_len = 550;
 static const unsigned char Galoped_sig_pub[]  = {
@@ -60,5 +65,98 @@ static const unsigned char Galoped_sig_pub[]  = {
   0x4c, 0xd2, 0xa2, 0xe4, 0x76, 0xe6, 0x02, 0x7b, 0xb9, 0x98, 0x6c, 0xe9, 0x98, 0x21, 0x90, 0x08,
   0x97, 0x02, 0x03, 0x01, 0x00, 0x01
 };
+
+
+struct RsaVerifyResult {
+  bool ok;
+  char message[128];
+};
+
+static RsaVerifyResult galoped_sign = { false, "" };
+
+// Verify RSA/PKCS#1 signature of a file using mbedtls (ESP32 hardware-accelerated).
+//   data_filename   – path on LittleFS to the file being verified
+//   sig_filename    – path on LittleFS to the binary DER-encoded signature file
+// Returns RsaVerifyResult { ok=true, message="OK" } on success, or
+//   { ok=false, message="<description>" } on any failure.
+static bool GalopedVerifyRsaFileSignature(
+    const char* data_filename,
+    const char* sig_filename)
+{
+  int ret;
+  galoped_sign.ok = false;
+
+  // --- Parse public key ---
+  mbedtls_pk_context pk;
+  mbedtls_pk_init(&pk);
+  // mbedtls PEM parser requires the null terminator to be included in the length
+  ret = mbedtls_pk_parse_public_key(&pk,
+      (unsigned char*)Galoped_sig_pub,
+      Galoped_sig_pub_len);
+  if (ret != 0) {
+    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Public key parse failed: -0x%04X", (unsigned)(-ret));
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  // --- Compute SHA-256 of the data file ---
+  File data_file = LittleFS.open(data_filename, "r");
+  if (!data_file) {
+    strlcpy(galoped_sign.message, "Data file not found", sizeof(galoped_sign.message));
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  mbedtls_sha256_context sha_ctx;
+  mbedtls_sha256_init(&sha_ctx);
+  mbedtls_sha256_starts(&sha_ctx, 0);   // 0 = SHA-256 (not SHA-224)
+
+  uint8_t io_buf[512];
+  while (data_file.available()) {
+    size_t n = data_file.read(io_buf, sizeof(io_buf));
+    if (n > 0) {
+      mbedtls_sha256_update(&sha_ctx, io_buf, n);
+    }
+  }
+  data_file.close();
+
+  uint8_t hash[32];
+  mbedtls_sha256_finish(&sha_ctx, hash);
+  mbedtls_sha256_free(&sha_ctx);
+
+  // --- Read the signature file ---
+  File sig_file = LittleFS.open(sig_filename, "r");
+  if (!sig_file) {
+    strlcpy(galoped_sign.message, "Signature file not found", sizeof(galoped_sign.message));
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  size_t sig_len = sig_file.size();
+  // RSA-4096 produces 512-byte signatures; reject obviously invalid sizes
+  if (sig_len == 0 || sig_len > 512) {
+    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Signature file has invalid size: %u", (unsigned)sig_len);
+    sig_file.close();
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  uint8_t sig_buf[512];
+  sig_file.read(sig_buf, sig_len);
+  sig_file.close();
+
+  // --- Verify signature ---
+  ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig_buf, sig_len);
+  mbedtls_pk_free(&pk);
+
+  if (ret != 0) {
+    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Signature invalid: -0x%04X", (unsigned)(-ret));
+    return false;
+  }
+
+  galoped_sign.ok = true;
+  strlcpy(galoped_sign.message, "OK", sizeof(galoped_sign.message));
+  return true;
+}
 
 #endif  // USE_GALOPED

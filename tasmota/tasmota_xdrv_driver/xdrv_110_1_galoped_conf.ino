@@ -19,13 +19,11 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+/*
+  Main function(s) implementation
+*/
+
 #ifdef USE_GALOPED
-
-#ifndef ESP32
-#error "Galoped supports the ESP-32 only"
-#endif
-
-#define XDRV_110 110
 
 #define GALOPED_STRINGIFY_(x) #x
 #define GALOPED_STRINGIFY(x) GALOPED_STRINGIFY_(x)
@@ -36,8 +34,7 @@
 #define GALOPED_INFO_NUM_FIELDS 5
 
 #include "IniFile.h"
-#include "mbedtls/pk.h"
-#include "mbedtls/sha256.h"
+#include "vid6608.h"
 
 #define WEB_HANDLE_GALOPED_CFG "galopcfg"
 
@@ -60,6 +57,11 @@ struct GalopedSettings {
 };
 
 static GalopedSettings galoped_settings;
+
+// Device indicator mode
+#define GALOPED_DISPLAY_NONE  0 // No automation, just indicator
+#define GALOPED_DISPLAY_CO2   1 // Display CO2 level
+
 
 /*********************************************************************************************\
  * Driver Settings load and save
@@ -118,109 +120,32 @@ struct GalopedInfo {
   char assembled[GALOPED_INFO_MAX_LINE];
   char personal[GALOPED_INFO_MAX_LINE];
   char mac[GALOPED_INFO_MAX_LINE];
+  uint8_t display_mode;
   bool loaded;
   bool valid;
   bool mac_match;
 };
 
-static GalopedInfo galoped_info = { "", "", "", "", "", "", "", false, false, false };
+static GalopedInfo galoped_info = { "", "", "", "", "", "", "", GALOPED_DISPLAY_NONE, false, false, false };
 
-struct RsaVerifyResult {
-  bool ok;
-  char message[128];
+struct GalopedGauge {
+  uint8_t id;
+  char name[8];
+  char unit[8];
+  uint16_t scale_deg;
 };
 
-static RsaVerifyResult galoped_sign = { false, "" };
-
-// Verify RSA/PKCS#1 signature of a file using mbedtls (ESP32 hardware-accelerated).
-//   data_filename   – path on LittleFS to the file being verified
-//   sig_filename    – path on LittleFS to the binary DER-encoded signature file
-// Returns RsaVerifyResult { ok=true, message="OK" } on success, or
-//   { ok=false, message="<description>" } on any failure.
-static bool GalopedVerifyRsaFileSignature(
-    const char* data_filename,
-    const char* sig_filename)
-{
-  int ret;
-  galoped_sign.ok = false;
-
-  // --- Parse public key ---
-  mbedtls_pk_context pk;
-  mbedtls_pk_init(&pk);
-  // mbedtls PEM parser requires the null terminator to be included in the length
-  ret = mbedtls_pk_parse_public_key(&pk,
-      (unsigned char*)Galoped_sig_pub,
-      Galoped_sig_pub_len);
-  if (ret != 0) {
-    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Public key parse failed: -0x%04X", (unsigned)(-ret));
-    mbedtls_pk_free(&pk);
-    return false;
-  }
-
-  // --- Compute SHA-256 of the data file ---
-  File data_file = LittleFS.open(data_filename, "r");
-  if (!data_file) {
-    strlcpy(galoped_sign.message, "Data file not found", sizeof(galoped_sign.message));
-    mbedtls_pk_free(&pk);
-    return false;
-  }
-
-  mbedtls_sha256_context sha_ctx;
-  mbedtls_sha256_init(&sha_ctx);
-  mbedtls_sha256_starts(&sha_ctx, 0);   // 0 = SHA-256 (not SHA-224)
-
-  uint8_t io_buf[512];
-  while (data_file.available()) {
-    size_t n = data_file.read(io_buf, sizeof(io_buf));
-    if (n > 0) {
-      mbedtls_sha256_update(&sha_ctx, io_buf, n);
-    }
-  }
-  data_file.close();
-
-  uint8_t hash[32];
-  mbedtls_sha256_finish(&sha_ctx, hash);
-  mbedtls_sha256_free(&sha_ctx);
-
-  // --- Read the signature file ---
-  File sig_file = LittleFS.open(sig_filename, "r");
-  if (!sig_file) {
-    strlcpy(galoped_sign.message, "Signature file not found", sizeof(galoped_sign.message));
-    mbedtls_pk_free(&pk);
-    return false;
-  }
-
-  size_t sig_len = sig_file.size();
-  // RSA-4096 produces 512-byte signatures; reject obviously invalid sizes
-  if (sig_len == 0 || sig_len > 512) {
-    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Signature file has invalid size: %u", (unsigned)sig_len);
-    sig_file.close();
-    mbedtls_pk_free(&pk);
-    return false;
-  }
-
-  uint8_t sig_buf[512];
-  sig_file.read(sig_buf, sig_len);
-  sig_file.close();
-
-  // --- Verify signature ---
-  ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig_buf, sig_len);
-  mbedtls_pk_free(&pk);
-
-  if (ret != 0) {
-    snprintf(galoped_sign.message, sizeof(galoped_sign.message), "Signature invalid: -0x%04X", (unsigned)(-ret));
-    return false;
-  }
-
-  galoped_sign.ok = true;
-  strlcpy(galoped_sign.message, "OK", sizeof(galoped_sign.message));
-  return true;
-}
+static GalopedGauge galoped_gauge_1 = { 1, "", "", 320 };
+static GalopedGauge galoped_gauge_2 = { 2, "", "", 270 };
 
 // Read the information file and verify signature
 static void GalopedReadInfoFile(void) {
   galoped_info.loaded = false;
   galoped_info.valid = false;
+
+  // Common buffer
+  char buf[32];
+  size_t buf_size = sizeof(buf)/sizeof(buf[0]);
 
   GalopedVerifyRsaFileSignature("/galoped.ini", "/galoped.sig");
 
@@ -237,6 +162,16 @@ static void GalopedReadInfoFile(void) {
   ini.getValueStr("galoped", "assembled", galoped_info.assembled, GALOPED_INFO_MAX_LINE);
   ini.getValueStr("galoped", "personal", galoped_info.personal, GALOPED_INFO_MAX_LINE);
   ini.getValueStr("galoped", "mac", galoped_info.mac, GALOPED_INFO_MAX_LINE);
+
+  bzero(buf, buf_size);
+  ini.getValueStr("galoped", "model", buf, buf_size);
+  AddLog(LOG_LEVEL_INFO, PSTR("GAL: Model %s"), buf);
+  if (strcmp(buf, "co2") == 0) {
+    // Standart Galoped CO2 meter
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: CO2"));
+    galoped_info.display_mode = GALOPED_DISPLAY_CO2;
+  }
+
   ini_file.close();
 
   galoped_info.valid = galoped_sign.ok;
@@ -326,7 +261,11 @@ void GalopedPage(void) {
   WSContentSend_P(PSTR("</table>"));
 
   // Page bottom
+  // Settings link:
+  WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='" WEB_HANDLE_GALOPED_CFG "' target='_blank'>Galoped settings</a></p>"));
+  // Webpage link:
   WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='https://gp.petro.ws/?mac=%s' target='_blank'>Galoped homepage</a></p>"), WiFiHelper::macAddress().c_str());
+  // Return button
   WSContentSpaceButton(BUTTON_MAIN);
   WSContentStop();
 }
@@ -371,56 +310,73 @@ void GalopedConfigPage(void) {
 
 #endif  // USE_WEBSERVER
 
-// ---------- Interface ----------
+void GalopedInit(void) {
+  // Load primary settings file and init
+  GalopedReadInfoFile();
+}
 
-bool Xdrv110(uint32_t function) {
-  bool result = false;
+// Returns HTML color string like "#00FF00" transitioning green → yellow → red
+// buf must be at least 8 bytes
+void GalopedColorGYR(char *buf, float value, float min_val, float max_val) {
+  float ratio = (value - min_val) / (max_val - min_val);
+  if (ratio < 0.0f) ratio = 0.0f;
+  if (ratio > 1.0f) ratio = 1.0f;
 
-  switch (function) {
-    case FUNC_PRE_INIT:
-      GalopedSettingsLoad(0);
-      break;
-
-    case FUNC_INIT:
-      result = true;
-      break;
-
-    case FUNC_SAVE_SETTINGS:
-      GalopedSettingsSave();
-      break;
-
-    case FUNC_RESET_SETTINGS:
-      GalopedSettingsLoad(1);
-      break;
-
-    case FUNC_RESTORE_SETTINGS:
-      result = GalopedSettingsRestore();
-      break;
-
-    case FUNC_COMMAND:
-      break;
-
-    case FUNC_ACTIVE:
-      break;
-
-#ifdef USE_WEBSERVER
-    case FUNC_WEB_ADD_HANDLER:
-      WebServer_on(PSTR("/" WEB_HANDLE_GALOPED), GalopedPage);
-      WebServer_on(PSTR("/" WEB_HANDLE_GALOPED_CFG), GalopedConfigPage);
-      break;
-
-    case FUNC_WEB_ADD_MAIN_BUTTON:
-      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED), PSTR("Galoped"));
-      break;
-
-    case FUNC_WEB_ADD_BUTTON:
-      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED_CFG), PSTR("Configure Galoped"));
-      break;
-
-#endif  // USE_WEBSERVER
+  uint8_t red, green;
+  if (ratio <= 0.5f) {
+    red = (uint8_t)(255.0f * ratio * 2.0f);
+    green = 255;
+  } else {
+    red = 255;
+    green = (uint8_t)(255.0f * (1.0f - ratio) * 2.0f);
   }
 
-  return result;
+  snprintf(buf, 8, "%02X%02X00", red, green);
+}
+
+// External drives
+extern vid6608 *vid6608Drives[4];
+
+// External sensors data
+// CO2
+extern uint16_t senseair_co2;
+uint16_t galoped_value_co2 = 0;
+
+// Main function to control everything
+void GalopedLoop(void) {
+  // In not (yet) init -> exit
+  if (!galoped_info.loaded) {
+    return;
+  }
+
+  // CO2 device?
+  if (GALOPED_DISPLAY_CO2 == galoped_info.display_mode) {
+    if (galoped_value_co2 != senseair_co2) {
+      // Value changed
+      AddLog(LOG_LEVEL_INFO, PSTR("GAL: CO2 value %d"), senseair_co2);
+      galoped_value_co2 = senseair_co2;
+
+      // Common buffer
+      char buf[32];
+      size_t buf_size = sizeof(buf)/sizeof(buf[0]);
+
+      // Calculate value
+      // Dead zone (15*12 steps) + linear (300*12 steps / 1800 units range)
+      uint16_t drive_pos = 180 + ((int(galoped_value_co2) - 400) * 2);
+
+      // Generate drive command
+      snprintf_P(buf, buf_size, PSTR("GaugeSet1 %d"), drive_pos);
+      ExecuteCommand(buf, SRC_SENSOR);
+
+      // Update Backlight?
+      if (GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
+        char color[8];
+        GalopedColorGYR(color, (float)galoped_value_co2, 400, 2200);
+        snprintf_P(buf, buf_size, PSTR("Color1 %s"), color);
+        ExecuteCommand(buf, SRC_SENSOR);
+      }
+    }
+  }
 }
 
 #endif  // USE_GALOPED
