@@ -286,15 +286,13 @@ void GalopedConfigPage(void) {
 
   WSContentSend_P(PSTR("<fieldset><legend><b>&nbsp;RGB LED&nbsp;</b></legend>"));
   WSContentSend_P(PSTR("<form method='get' action='" WEB_HANDLE_GALOPED_CFG "'>"));
-  WSContentSend_P(PSTR("<p><b>RGB Mode</b><br>"
-    "<select id='rm' name='rm'>"
-    "<option value='%d'%s>Static</option>"
-    "<option value='%d'%s>Dynamic (Gauge)</option>"
-    "<option value='%d'%s>Gradient</option>"
-    "</select></p>"),
-    GALOPED_RGB_STATIC,  (galoped_settings.rgb_mode == GALOPED_RGB_STATIC)   ? " selected" : "",
-    GALOPED_RGB_DYNAMIC,  (galoped_settings.rgb_mode == GALOPED_RGB_DYNAMIC)  ? " selected" : "",
-    GALOPED_RGB_GRADIENT, (galoped_settings.rgb_mode == GALOPED_RGB_GRADIENT) ? " selected" : "");
+  WSContentSend_P(PSTR("<p><b>RGB Mode</b><br><select id='rm' name='rm'>"));
+  WSContentSend_P(PSTR("<option value='%d'%s>Static</option>"), GALOPED_RGB_STATIC, (galoped_settings.rgb_mode == GALOPED_RGB_STATIC) ? " selected" : "");
+  if (GALOPED_DISPLAY_CO2 == galoped_info.display_mode) {
+    WSContentSend_P(PSTR("<option value='%d'%s>Dynamic (CO2)</option>"), GALOPED_RGB_DYNAMIC, (galoped_settings.rgb_mode == GALOPED_RGB_DYNAMIC) ? " selected" : "");
+  }
+  WSContentSend_P(PSTR("<option value='%d'%s>Gradient</option>"), GALOPED_RGB_GRADIENT, (galoped_settings.rgb_mode == GALOPED_RGB_GRADIENT) ? " selected" : "");
+  WSContentSend_P(PSTR("</select></p>"));
   WSContentSend_P(PSTR("<br><button name='save' type='submit' class='button bgrn'>" D_SAVE "</button>"));
   WSContentSend_P(PSTR("</form></fieldset>"));
 
