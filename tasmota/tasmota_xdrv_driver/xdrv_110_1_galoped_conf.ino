@@ -217,7 +217,7 @@ void GalopedPage(void) {
     } else if (!galoped_info.valid) {
       error_msg = "Invalid device signature";
     }
-    WSContentSend_P(PSTR("<tr><td><div style='padding:5px;text-align:center;'><b style='color:red'>Device information not available</b><br/><br/>%s</div></td></tr>"), error_msg);
+    WSContentSend_P(PSTR("<tr><td colspan=2><div style='padding:5px;text-align:center;'><b style='color:red'>Device information not available</b><br/><br/>%s</div></td></tr>"), error_msg);
   } else {
     if (strlen(galoped_info.personal)) {
       WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Built for" TABLE_INFO_ROW_MID "<b style='color:gold'>%s<b>" TABLE_INFO_ROW_END), galoped_info.personal);
