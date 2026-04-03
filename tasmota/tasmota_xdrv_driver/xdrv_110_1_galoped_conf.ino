@@ -398,7 +398,9 @@ void GalopedLoop(void) {
 
       // Update Backlight color (hue only, preserving user brightness)
       if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
-        uint16_t hue = GalopedColorGYR((float)galoped_value_co2, 400, 2200);
+        // Last values: when color stops be "green" and when full "red",
+        // defined as not full scale, to ensure clear indication
+        uint16_t hue = GalopedColorGYR((float)galoped_value_co2, 900, 1700);
         snprintf_P(buf, buf_size, PSTR("HSBColor %d,100"), hue);
         ExecuteCommand(buf, SRC_SENSOR);
       }
