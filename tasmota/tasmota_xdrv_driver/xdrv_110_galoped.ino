@@ -39,9 +39,76 @@
 #include "mbedtls/pk.h"
 #include "mbedtls/sha256.h"
 
+#define WEB_HANDLE_GALOPED_CFG "galopcfg"
+
 #define TABLE_INFO_ROW_START "<tr><th>"
 #define TABLE_INFO_ROW_MID "</th><td>"
 #define TABLE_INFO_ROW_END "</td></tr>"
+
+// RGB LED modes
+#define GALOPED_RGB_STATIC      0  // Static (fixed color)
+#define GALOPED_RGB_DYNAMIC     1  // Dynamic: green-yellow-red follows Gauge1
+#define GALOPED_RGB_GRADIENT    2  // Static gradient: green-yellow-red always
+#define GALOPED_RGB_MODE_MAX    2
+
+#define GALOPED_SETTINGS_VERSION 0x01010100
+
+struct GalopedSettings {
+  uint32_t crc32;
+  uint32_t version;
+  uint8_t  rgb_mode;
+};
+
+static GalopedSettings galoped_settings;
+
+/*********************************************************************************************\
+ * Driver Settings load and save
+\*********************************************************************************************/
+
+static void GalopedSettingsDefault(void) {
+  memset(&galoped_settings, 0x00, sizeof(galoped_settings));
+  galoped_settings.version = GALOPED_SETTINGS_VERSION;
+  galoped_settings.rgb_mode = GALOPED_RGB_STATIC;
+}
+
+static void GalopedSettingsLoad(bool erase) {
+  GalopedSettingsDefault();
+
+#ifdef USE_UFILESYS
+  char filename[20];
+  snprintf_P(filename, sizeof(filename), PSTR(TASM_FILE_DRIVER), XDRV_110);
+  if (erase) {
+    TfsDeleteFile(filename);
+  } else if (TfsLoadFile(filename, (uint8_t*)&galoped_settings, sizeof(galoped_settings))) {
+    if (galoped_settings.version != GALOPED_SETTINGS_VERSION) {
+      galoped_settings.version = GALOPED_SETTINGS_VERSION;
+      GalopedSettingsSave();
+    }
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Settings loaded, rgb_mode=%d"), galoped_settings.rgb_mode);
+  } else {
+    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Settings file not found, using defaults"));
+  }
+#endif  // USE_UFILESYS
+}
+
+static void GalopedSettingsSave(void) {
+#ifdef USE_UFILESYS
+  uint32_t crc32 = GetCfgCrc32((uint8_t*)&galoped_settings + 4, sizeof(galoped_settings) - 4);
+  if (crc32 != galoped_settings.crc32) {
+    galoped_settings.crc32 = crc32;
+    char filename[20];
+    snprintf_P(filename, sizeof(filename), PSTR(TASM_FILE_DRIVER), XDRV_110);
+    TfsSaveFile(filename, (const uint8_t*)&galoped_settings, sizeof(galoped_settings));
+    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Settings saved"));
+  }
+#endif  // USE_UFILESYS
+}
+
+static bool GalopedSettingsRestore(void) {
+  XdrvMailbox.data = (char*)&galoped_settings;
+  XdrvMailbox.index = sizeof(galoped_settings);
+  return true;
+}
 
 struct GalopedInfo {
   char serial[GALOPED_INFO_MAX_LINE];
@@ -264,6 +331,44 @@ void GalopedPage(void) {
   WSContentStop();
 }
 
+void GalopedConfigPage(void) {
+  if (!HttpCheckPriviledgedAccess()) { return; }
+
+  AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP "Galoped config"));
+
+  if (Webserver->hasArg(F("save"))) {
+    char tmp[8];
+    WebGetArg(PSTR("rm"), tmp, sizeof(tmp));
+    uint8_t mode = atoi(tmp);
+    if (mode <= GALOPED_RGB_MODE_MAX) {
+      galoped_settings.rgb_mode = mode;
+      GalopedSettingsSave();
+    }
+    HandleConfiguration();
+    return;
+  }
+
+  WSContentStart_P(PSTR("Galoped Configuration"));
+  WSContentSendStyle();
+
+  WSContentSend_P(PSTR("<fieldset><legend><b>&nbsp;RGB LED&nbsp;</b></legend>"));
+  WSContentSend_P(PSTR("<form method='get' action='" WEB_HANDLE_GALOPED_CFG "'>"));
+  WSContentSend_P(PSTR("<p><b>RGB Mode</b><br>"
+    "<select id='rm' name='rm'>"
+    "<option value='%d'%s>Static</option>"
+    "<option value='%d'%s>Dynamic (Gauge)</option>"
+    "<option value='%d'%s>Gradient</option>"
+    "</select></p>"),
+    GALOPED_RGB_STATIC,  (galoped_settings.rgb_mode == GALOPED_RGB_STATIC)   ? " selected" : "",
+    GALOPED_RGB_DYNAMIC,  (galoped_settings.rgb_mode == GALOPED_RGB_DYNAMIC)  ? " selected" : "",
+    GALOPED_RGB_GRADIENT, (galoped_settings.rgb_mode == GALOPED_RGB_GRADIENT) ? " selected" : "");
+  WSContentSend_P(PSTR("<br><button name='save' type='submit' class='button bgrn'>" D_SAVE "</button>"));
+  WSContentSend_P(PSTR("</form></fieldset>"));
+
+  WSContentSpaceButton(BUTTON_CONFIGURATION);
+  WSContentStop();
+}
+
 #endif  // USE_WEBSERVER
 
 // ---------- Interface ----------
@@ -272,8 +377,24 @@ bool Xdrv110(uint32_t function) {
   bool result = false;
 
   switch (function) {
+    case FUNC_PRE_INIT:
+      GalopedSettingsLoad(0);
+      break;
+
     case FUNC_INIT:
       result = true;
+      break;
+
+    case FUNC_SAVE_SETTINGS:
+      GalopedSettingsSave();
+      break;
+
+    case FUNC_RESET_SETTINGS:
+      GalopedSettingsLoad(1);
+      break;
+
+    case FUNC_RESTORE_SETTINGS:
+      result = GalopedSettingsRestore();
       break;
 
     case FUNC_COMMAND:
@@ -285,10 +406,15 @@ bool Xdrv110(uint32_t function) {
 #ifdef USE_WEBSERVER
     case FUNC_WEB_ADD_HANDLER:
       WebServer_on(PSTR("/" WEB_HANDLE_GALOPED), GalopedPage);
+      WebServer_on(PSTR("/" WEB_HANDLE_GALOPED_CFG), GalopedConfigPage);
       break;
 
     case FUNC_WEB_ADD_MAIN_BUTTON:
       WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED), PSTR("Galoped"));
+      break;
+
+    case FUNC_WEB_ADD_BUTTON:
+      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED_CFG), PSTR("Configure Galoped"));
       break;
 
 #endif  // USE_WEBSERVER
