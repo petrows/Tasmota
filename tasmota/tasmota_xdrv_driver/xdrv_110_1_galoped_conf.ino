@@ -256,7 +256,7 @@ void GalopedPage(void) {
 
   // Page bottom
   // Settings link:
-  WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='" WEB_HANDLE_GALOPED_CFG "' target='_blank'>Galoped settings</a></p>"));
+  WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='" WEB_HANDLE_GALOPED_CFG "'>Galoped settings</a></p>"));
   // Webpage link:
   WSContentSend_P(PSTR("<p style='text-align:center;padding:5px;font-weight:bold;'><a href='https://gp.petro.ws/?mac=%s' target='_blank'>Galoped homepage</a></p>"), WiFiHelper::macAddress().c_str());
   // Return button
