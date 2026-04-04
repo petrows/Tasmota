@@ -352,7 +352,7 @@ bool GalopedStatusWeb(void) {
   for (int x=0; x < GALOPED_GAUGES_NUM; x++) {
     GalopedGauge * gauge = &galoped_gauges[x];
     if (gauge->set) {
-      WSContentSend_PD(PSTR("<tr><th>%s</th><td><b>%d</b> <i>%s</i></td></tr>"),
+      WSContentSend_PD(PSTR("{s}&#8599; %s {m}<b>%d</b> %s{e}"),
         gauge->name, gauge->value, gauge->unit
       );
     }
@@ -495,6 +495,7 @@ void GalopedHandlerCommandSet(void) {
 bool GalopedCommandValue(uint32_t index, int32_t position) {
   // In not (yet) init -> exit
   if (!galoped_info.loaded) {
+    Response_P(PSTR("{\"Galoped\":{\"error\":\"Config file not loaded\"}}"));
     return false;
   }
 

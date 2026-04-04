@@ -283,7 +283,7 @@ void VID6608StatusWeb() {
   for (uint8_t x = 0; x < VID6608_MAX_DRIVES; x++) {
     vid6608 *driver = vid6608Drives[x];
     if (driver) {
-      WSContentSend_PD(PSTR("<tr><th>Gauge %d</th><td>%d</td></tr>"), (int32_t)(x+1), (int32_t)driver->getPosition());
+      WSContentSend_PD(PSTR("{s}Gauge %d {m}%d{e}"), (int32_t)(x+1), (int32_t)driver->getPosition());
     }
   }
   VID6608_MUTEX_GIVE
