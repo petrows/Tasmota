@@ -50,6 +50,11 @@ bool GalopedFramInit(void) {
   return galoped_fram_detected;
 }
 
+// Return FRAM status
+bool GalopedFramInitilized(void) {
+  return galoped_fram_detected;
+}
+
 // Write a single byte to FRAM at given address (0..511)
 static bool GalopedFramWriteByte(uint16_t addr, uint8_t data) {
   if (!galoped_fram_detected || addr >= GALOPED_FRAM_SIZE) { return false; }

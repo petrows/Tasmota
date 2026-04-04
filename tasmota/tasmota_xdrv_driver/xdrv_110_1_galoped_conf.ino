@@ -207,8 +207,8 @@ static void GalopedReadInfoFile(void) {
       gauge->steps_dead_zone = 12.0 * (float)gauge->deg_dead_zone;
       gauge->steps_per_unit = (12.0 * (float)(gauge->deg - gauge->deg_dead_zone)) / (float)(gauge->max - gauge->min);
       AddLog(LOG_LEVEL_INFO,
-        PSTR("GAL: Drive %d (%s) has %d° scale, unit %s, range %d-%d"),
-        x+1, gauge->name, gauge->deg, gauge->unit, gauge->min, gauge->max
+        PSTR("GAL: Drive %d (%s), %d° scale (%d°), unit %s, range %d-%d"),
+        x+1, gauge->name, gauge->deg, gauge->deg_dead_zone, gauge->unit, gauge->min, gauge->max
       );
     }
   }
@@ -292,6 +292,9 @@ void GalopedPage(void) {
   // WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>OK</b>" TABLE_INFO_ROW_END));
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GalopedFwVerion());
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Chipset" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GetDeviceHardwareRevision().c_str());
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FRAM" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END),
+    GalopedFramInitilized() ? "Yes" : "No"
+  );
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_MAC_ADDRESS TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), WiFiHelper::macAddress().c_str());
   if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
     WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_IP_ADDRESS TABLE_INFO_ROW_MID "%_I" TABLE_INFO_ROW_END), (uint32_t)WiFi.localIP());
