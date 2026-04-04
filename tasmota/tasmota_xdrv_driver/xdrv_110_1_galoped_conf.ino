@@ -25,12 +25,14 @@
 
 #ifdef USE_GALOPED
 
+#include "IniFile.h"
+
 #define WEB_HANDLE_GALOPED "galoped"
 
 #define GALOPED_INFO_MAX_LINE 32
 #define GALOPED_INFO_NUM_FIELDS 5
 
-#include "IniFile.h"
+
 
 #define WEB_HANDLE_GALOPED_CFG "galopcfg"
 
@@ -367,9 +369,27 @@ void GalopedInit(void) {
   // Load primary settings file and init
   GalopedReadInfoFile();
 
-  // Reset drivers
-  // FIXME: Be more smart and use FRAM
-  ExecuteCommand("GaugeZero0 50", SRC_SENSOR);
+  // Restore drive position
+  // FRAM chip?
+  if (GalopedFramInit()) {
+    // FRAM chip is on place, read saved data to restore drives
+    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Restore saved potiion from FRAM"));
+    for (uint16_t x=0; x<GALOPED_GAUGES_NUM; x++) {
+      uint16_t saved_pos = 0;
+      uint16_t fram_addr = x * 2;
+      // Read FRAM for this drive
+      if (GalopedFramReadUint16(fram_addr, &saved_pos)) {
+        AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Drive %d restore position from %d"), x+1, (int)saved_pos);
+      }
+      snprintf_P(galoped_buf, galoped_buf_size, PSTR("GaugeZero%d %d"), x+1, (int)saved_pos);
+      ExecuteCommand(galoped_buf, SRC_SENSOR);
+      // Reset position in FRAM (required, if new reboot will perform without gauge movement)
+      GalopedFramWriteUint16(fram_addr, 0);
+    }
+  } else {
+    // Default routine
+    ExecuteCommand("GaugeZero0 50", SRC_SENSOR);
+  }
 }
 
 // Returns Hue (0-360) for green→yellow→red transition
@@ -518,6 +538,9 @@ bool GalopedCommandValue(uint32_t index, int32_t position) {
 
   // Calculate steps -> units with corrected value, started from min, respecting dead zone
   float stepsCommand = gauge->steps_dead_zone + (gauge->steps_per_unit * (float)(position - gauge->min));
+
+  // Save values to FRAM
+  GalopedFramWriteUint16((index-1)*2, (uint16_t)stepsCommand);
 
   // Issue drive command
   snprintf_P(galoped_buf, galoped_buf_size, PSTR("GaugeSet%u %d"), index, (int)stepsCommand);
