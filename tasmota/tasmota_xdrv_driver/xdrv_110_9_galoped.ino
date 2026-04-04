@@ -25,6 +25,24 @@
 #error "Galoped supports the ESP-32 only"
 #endif
 
+/**
+ * @brief Custom Galoped commands:
+ *
+ * GalopedSet - set indication value in defined units
+ * GalopedZero - reset drive and set to 0
+ */
+
+const char kGalopedCommands[] PROGMEM = "Galoped" "|"  // Prefix
+  "|" "Set"
+  "|" "Zero"
+  ;
+
+void (* const GalopedCommand[])(void) PROGMEM = {
+  &GalopedHandlerCommand,
+  &GalopedHandlerCommandSet,
+  &GalopedHandlerCommandZero,
+};
+
 // ---------- Interface ----------
 
 bool Xdrv110(uint32_t function) {
@@ -53,6 +71,7 @@ bool Xdrv110(uint32_t function) {
       break;
 
     case FUNC_COMMAND:
+      result = DecodeCommand(kGalopedCommands, GalopedCommand);
       break;
 
     case FUNC_ACTIVE:
