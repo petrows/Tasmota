@@ -91,6 +91,10 @@ bool Xdrv110(uint32_t function) {
       WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED_CFG), PSTR("Configure Galoped"));
       break;
 
+    case FUNC_WEB_SENSOR:
+      result = GalopedStatusWeb();
+      break;
+
 #endif  // USE_WEBSERVER
   }
 

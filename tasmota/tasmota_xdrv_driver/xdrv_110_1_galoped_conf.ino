@@ -126,12 +126,15 @@ static GalopedInfo galoped_info = { "", "", "", "", "", "", "", GALOPED_DISPLAY_
 
 struct GalopedGauge {
   bool set; // Configured?
-  char name[8];
+  char name[16];
   char unit[8];
+  int32_t value; // Last command set
   int32_t min; // Scale value start (in units)
   int32_t max; // Scale value stop (in units)
   float steps_per_unit;
+  float steps_dead_zone; // Scale dead zone in steps
   uint16_t deg; // Scale size in degrees
+  uint16_t deg_dead_zone; // Scale dead zone in degrees
 };
 
 #define GALOPED_GAUGES_NUM 2
@@ -185,16 +188,22 @@ static void GalopedReadInfoFile(void) {
     GalopedGauge * gauge = &galoped_gauges[x];
     // Prepare section name
     snprintf_P(buf, buf_size, PSTR("gauge-%d"), x+1);
-    ini.getValueStr(buf, "name", gauge->name, 8);
-    ini.getValueStr(buf, "unit", gauge->unit, 8);
+    ini.getValueStr(buf, "name", gauge->name, sizeof(gauge->name)/sizeof(gauge->name[0]));
+    ini.getValueStr(buf, "unit", gauge->unit, sizeof(gauge->unit)/sizeof(gauge->unit[0]));
     ini.getValueInt(buf, "min", gauge->min);
     ini.getValueInt(buf, "max", gauge->max);
     ini.getValueUInt16(buf, "deg", gauge->deg);
+    ini.getValueUInt16(buf, "deg_dz", gauge->deg_dead_zone);
 
-    // Update gauge info
-    if (gauge->deg > 0 && gauge->min < gauge->max) {
+    // Update gauge info with some sanity checks
+    if (
+      gauge->deg > 0
+      && gauge->min < gauge->max
+      && gauge->deg > gauge->deg_dead_zone
+    ) {
       gauge->set = true;
-      gauge->steps_per_unit = (12.0 * (float)gauge->deg) / (float)(gauge->max - gauge->min);
+      gauge->steps_dead_zone = 12.0 * (float)gauge->deg_dead_zone;
+      gauge->steps_per_unit = (12.0 * (float)(gauge->deg - gauge->deg_dead_zone)) / (float)(gauge->max - gauge->min);
       AddLog(LOG_LEVEL_INFO,
         PSTR("GAL: Drive %d (%s) has %d° scale, unit %s, range %d-%d"),
         x+1, gauge->name, gauge->deg, gauge->unit, gauge->min, gauge->max
@@ -334,6 +343,24 @@ void GalopedConfigPage(void) {
   WSContentStop();
 }
 
+/**
+ * @brief Curent drives config status page
+ *
+ */
+bool GalopedStatusWeb(void) {
+  WSContentSend_PD(HTTP_TABLE100);
+  for (int x=0; x < GALOPED_GAUGES_NUM; x++) {
+    GalopedGauge * gauge = &galoped_gauges[x];
+    if (gauge->set) {
+      WSContentSend_PD(PSTR("<tr><th>%s</th><td><b>%d</b> <i>%s</i></td></tr>"),
+        gauge->name, gauge->value, gauge->unit
+      );
+    }
+  }
+  WSContentSend_PD(PSTR("</table>"));
+  return true;
+}
+
 #endif  // USE_WEBSERVER
 
 void GalopedInit(void) {
@@ -428,16 +455,11 @@ void GalopedLoop(void) {
   if (GALOPED_DISPLAY_CO2 == galoped_info.display_mode) {
     if (galoped_value_co2 != senseair_co2) {
       // Value changed
-      AddLog(LOG_LEVEL_INFO, PSTR("GAL: CO2 value %d"), senseair_co2);
+      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: CO2 value %d"), senseair_co2);
       galoped_value_co2 = senseair_co2;
 
-      // Calculate value
-      // Dead zone (15*12 steps) + linear (300*12 steps / 1800 units range)
-      uint16_t drive_pos = 180 + ((int(galoped_value_co2) - 400) * 2);
-
-      // Generate drive command
-      snprintf_P(galoped_buf, galoped_buf_size, PSTR("GaugeSet1 %d"), drive_pos);
-      ExecuteCommand(galoped_buf, SRC_SENSOR);
+      // Execute command
+      GalopedCommandValue(1, galoped_value_co2);
 
       // Update Backlight color (hue only, preserving user brightness)
       if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
@@ -467,12 +489,22 @@ void GalopedHandlerCommandSet(void) {
     return;
   }
 
+  GalopedCommandValue(index, position);
+}
+
+bool GalopedCommandValue(uint32_t index, int32_t position) {
+  // In not (yet) init -> exit
+  if (!galoped_info.loaded) {
+    return false;
+  }
+
   // Device can have up to GALOPED_GAUGES_NUM drives: test index validity (we dont support all-set command)
   // Check that index matches configured one and drive has valid config
   if (index < 1 || index > GALOPED_GAUGES_NUM || !galoped_gauges[index-1].set) {
     Response_P(PSTR("{\"Galoped\":{\"error\":\"Invalid drive index %u\"}}"), index);
-    return;
+    return false;
   }
+
   // We have valid index, make a pointer to proper one
   GalopedGauge * gauge = &galoped_gauges[index-1];
 
@@ -480,19 +512,22 @@ void GalopedHandlerCommandSet(void) {
   if (position < gauge->min) { position = gauge->min; }
   if (position > gauge->max) { position = gauge->max; }
 
-  // Calculate steps -> units with corrected value, started from min
-  float stepsCommand = gauge->steps_per_unit * (float)(position - gauge->min);
+  // Save value set
+  gauge->value = position;
+
+  // Calculate steps -> units with corrected value, started from min, respecting dead zone
+  float stepsCommand = gauge->steps_dead_zone + (gauge->steps_per_unit * (float)(position - gauge->min));
+
+  // Issue drive command
+  snprintf_P(galoped_buf, galoped_buf_size, PSTR("GaugeSet%u %d"), index, (int)stepsCommand);
+  ExecuteCommand(galoped_buf, SRC_SENSOR);
 
   // Write response
   Response_P(PSTR("{\"Galoped\":{\"%s\":{\"cmd\":\"set\",\"value\":%d,\"unit\":\"%s\",\"steps\":%d}}}"),
     gauge->name, position, gauge->unit, (int)stepsCommand
   );
 
-  // Issue drive command
-  snprintf_P(galoped_buf, galoped_buf_size, PSTR("GaugeSet%u %d"), index, (int)stepsCommand);
-  ExecuteCommand(galoped_buf, SRC_SENSOR);
-
-  return;
+  return true;
 }
 
 #endif  // USE_GALOPED
