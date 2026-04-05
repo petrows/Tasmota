@@ -32,8 +32,6 @@
 #define GALOPED_INFO_MAX_LINE 32
 #define GALOPED_INFO_NUM_FIELDS 5
 
-
-
 #define WEB_HANDLE_GALOPED_CFG "galopcfg"
 
 #define TABLE_INFO_ROW_START "<tr><th>"
@@ -46,7 +44,7 @@
 #define GALOPED_RGB_GRADIENT    2  // Static gradient: green-yellow-red always
 #define GALOPED_RGB_MODE_MAX    2
 
-#define GALOPED_SETTINGS_VERSION 0x01010100
+#define GALOPED_SETTINGS_VERSION 0x02
 
 struct GalopedSettings {
   uint32_t crc32;
@@ -59,6 +57,7 @@ static GalopedSettings galoped_settings;
 // Device indicator mode
 #define GALOPED_DISPLAY_NONE  0 // No automation, just indicator
 #define GALOPED_DISPLAY_CO2   1 // Display CO2 level
+#define GALOPED_DISPLAY_BBL_TP   2 // Display BambuLab 3D printer biaxial (Temp+Progress)
 
 
 /*********************************************************************************************\
@@ -362,6 +361,7 @@ bool GalopedStatusWeb(void) {
       );
     }
   }
+  BblStatusWeb();
   WSContentSend_PD(PSTR("</table>"));
   return true;
 }

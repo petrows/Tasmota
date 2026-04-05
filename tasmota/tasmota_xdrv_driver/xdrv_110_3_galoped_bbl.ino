@@ -138,6 +138,8 @@ static void BblMqttCallback(char *topic, uint8_t *payload, unsigned int length) 
   // For memory efficiency, scan for the "print" object only
   if (length < 10) return;
 
+  AddLog(LOG_LEVEL_DEBUG, PSTR("BBL: MQTT data %d"), length);
+
   // Null-terminate the payload for string operations
   char *json = (char*)payload;
   char saved = json[length];
@@ -531,7 +533,8 @@ void BblConfigPage(void) {
     "<p><b>Connection Mode</b><br>"
     "<select id='bm' name='bm' onchange='bblMode()'>"
     "<option value='%d'%s>Local (LAN)</option>"
-    "<option value='%d'%s>BambuCloud</option>"
+    // BambuCloud is broken
+    // "<option value='%d'%s>BambuCloud</option>"
     "</select></p>"),
     BBL_MODE_LOCAL, bbl_settings.mode == BBL_MODE_LOCAL ? " selected" : "",
     BBL_MODE_CLOUD, bbl_settings.mode == BBL_MODE_CLOUD ? " selected" : "");
