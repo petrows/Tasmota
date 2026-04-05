@@ -55,7 +55,12 @@ bool Xdrv110(uint32_t function) {
 
     case FUNC_INIT:
       GalopedInit();
+      BblInit();
       result = true;
+      break;
+
+    case FUNC_EVERY_SECOND:
+      BblEverySecond();
       break;
 
     case FUNC_SAVE_SETTINGS:
@@ -81,6 +86,7 @@ bool Xdrv110(uint32_t function) {
     case FUNC_WEB_ADD_HANDLER:
       WebServer_on(PSTR("/" WEB_HANDLE_GALOPED), GalopedPage);
       WebServer_on(PSTR("/" WEB_HANDLE_GALOPED_CFG), GalopedConfigPage);
+      WebServer_on(PSTR("/" WEB_HANDLE_BBL_CFG), BblConfigPage);
       break;
 
     case FUNC_WEB_ADD_MAIN_BUTTON:
@@ -89,10 +95,16 @@ bool Xdrv110(uint32_t function) {
 
     case FUNC_WEB_ADD_BUTTON:
       WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED_CFG), PSTR("Configure Galoped"));
+      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_BBL_CFG), PSTR("Configure BambuLab"));
       break;
 
     case FUNC_WEB_SENSOR:
       result = GalopedStatusWeb();
+      BblStatusWeb();
+      break;
+
+    case FUNC_JSON_APPEND:
+      BblShowJson(true);
       break;
 
 #endif  // USE_WEBSERVER
