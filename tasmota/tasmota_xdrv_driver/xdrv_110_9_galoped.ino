@@ -59,8 +59,13 @@ bool Xdrv110(uint32_t function) {
       result = true;
       break;
 
+    case FUNC_LOOP:
+      BblLoop();
+      break;
+
     case FUNC_EVERY_SECOND:
       BblEverySecond();
+      GalopedLoop();
       break;
 
     case FUNC_SAVE_SETTINGS:

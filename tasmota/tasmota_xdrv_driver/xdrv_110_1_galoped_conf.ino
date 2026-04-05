@@ -57,7 +57,7 @@ static GalopedSettings galoped_settings;
 // Device indicator mode
 #define GALOPED_DISPLAY_NONE  0 // No automation, just indicator
 #define GALOPED_DISPLAY_CO2   1 // Display CO2 level
-#define GALOPED_DISPLAY_BBL_TP   2 // Display BambuLab 3D printer biaxial (Temp+Progress)
+#define GALOPED_DISPLAY_3DP_TP   2 // Display 3D printer biaxial (Temp+Progress)
 
 
 /*********************************************************************************************\
@@ -179,6 +179,11 @@ static void GalopedReadInfoFile(void) {
     // Standart Galoped CO2 meter
     AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: CO2"));
     galoped_info.display_mode = GALOPED_DISPLAY_CO2;
+  }
+  if (strcmp(buf, "3dp_tp") == 0) {
+    // Standart Galoped CO2 meter
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: BambuLab printer (Temperature + Progress)"));
+    galoped_info.display_mode = GALOPED_DISPLAY_3DP_TP;
   }
 
   // Reset Gauges info
@@ -335,9 +340,9 @@ void GalopedConfigPage(void) {
   WSContentSend_P(PSTR("<form method='get' action='" WEB_HANDLE_GALOPED_CFG "'>"));
   WSContentSend_P(PSTR("<p><b>RGB Mode</b><br><select id='rm' name='rm'>"));
   WSContentSend_P(PSTR("<option value='%d'%s>Static</option>"), GALOPED_RGB_STATIC, (galoped_settings.rgb_mode == GALOPED_RGB_STATIC) ? " selected" : "");
-  if (GALOPED_DISPLAY_CO2 == galoped_info.display_mode) {
-    WSContentSend_P(PSTR("<option value='%d'%s>Dynamic (CO2)</option>"), GALOPED_RGB_DYNAMIC, (galoped_settings.rgb_mode == GALOPED_RGB_DYNAMIC) ? " selected" : "");
-  }
+  //if (GALOPED_DISPLAY_CO2 == galoped_info.display_mode) {
+    WSContentSend_P(PSTR("<option value='%d'%s>Dynamic (from value)</option>"), GALOPED_RGB_DYNAMIC, (galoped_settings.rgb_mode == GALOPED_RGB_DYNAMIC) ? " selected" : "");
+  //}
   WSContentSend_P(PSTR("<option value='%d'%s>Gradient</option>"), GALOPED_RGB_GRADIENT, (galoped_settings.rgb_mode == GALOPED_RGB_GRADIENT) ? " selected" : "");
   WSContentSend_P(PSTR("</select></p>"));
   WSContentSend_P(PSTR("<br><button name='save' type='submit' class='button bgrn'>" D_SAVE "</button>"));
@@ -457,6 +462,9 @@ void GalopedSetGradient(void) {
 // CO2
 extern uint16_t senseair_co2;
 uint16_t galoped_value_co2 = 0;
+uint8_t galoped_bbl_status = 0xFF;
+uint8_t galoped_bbl_progress = 0xFF;
+int32_t galoped_bbl_temperature = -1;
 
 // Main function to control everything
 void GalopedLoop(void) {
@@ -473,7 +481,7 @@ void GalopedLoop(void) {
     GalopedSetGradient();
   }
 
-  // Custom device implementation
+  // Custom device internal logic implementation
   // CO2 device?
   if (GALOPED_DISPLAY_CO2 == galoped_info.display_mode) {
     if (galoped_value_co2 != senseair_co2) {
@@ -490,6 +498,44 @@ void GalopedLoop(void) {
         // defined as not full scale, to ensure clear indication
         uint16_t hue = GalopedColorGYR((float)galoped_value_co2, 400, 1700);
         snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %d,100"), hue);
+        ExecuteCommand(galoped_buf, SRC_SENSOR);
+      }
+    }
+  }
+  // 3D printer indicator ->
+  if (GALOPED_DISPLAY_3DP_TP == galoped_info.display_mode) {
+    uint8_t status = BblGetGCodeStatus();
+    uint8_t progress = BblGetProgress();
+    int32_t temperature = BblGetNozzleTemp();
+    // Trigger on-change only (progress)
+    if (temperature != galoped_bbl_temperature) {
+      galoped_bbl_temperature = temperature;
+      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: BBL temperature changed to %d"), (int)temperature);
+      // Execute command
+      GalopedCommandValue(1, temperature);
+    }
+    // Trigger on-change only (progress)
+    if (progress != galoped_bbl_progress) {
+      galoped_bbl_progress = progress;
+      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: BBL progress changed to %d"), (int)progress);
+      // Execute command
+      GalopedCommandValue(2, progress);
+    }
+    // Trigger on-change only (status)
+    if (status != galoped_bbl_status) {
+      galoped_bbl_status = status;
+      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: BBL state changed to %d"), status);
+      // Update Backlight color (hue only, preserving user brightness)
+      if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
+        const char * bbl_color = "";
+        if (BblStatusIsFinished()) {
+          bbl_color = "116,100"; // Green
+        } else if (BblStatusIsRunning()) {
+          bbl_color = "42,100"; // Yellow
+        } else {
+          bbl_color = "0,100"; // Red
+        }
+        snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), bbl_color);
         ExecuteCommand(galoped_buf, SRC_SENSOR);
       }
     }

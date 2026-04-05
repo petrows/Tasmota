@@ -36,9 +36,9 @@
 
 #define BBL_MQTT_PORT        8883
 #define BBL_MQTT_KEEPALIVE   30
-#define BBL_MQTT_BUF_SIZE    4096   // BambuLab sends large JSON payloads
-#define BBL_RECONNECT_INTERVAL 30   // Seconds between reconnect attempts
-#define BBL_PUSHALL_INTERVAL 60     // Seconds between pushall requests
+#define BBL_MQTT_BUF_SIZE    32*1024  // BambuLab pushall response can be large
+#define BBL_RECONNECT_INTERVAL 30     // Seconds between reconnect attempts
+#define BBL_PUSHALL_INTERVAL 60       // Seconds between pushall requests
 
 // Cloud MQTT endpoints (EU uses US broker)
 #define BBL_CLOUD_HOST_US "us.mqtt.bambulab.com"
@@ -54,6 +54,14 @@
 #define BBL_MODE_CLOUD  1
 
 #define BBL_SETTINGS_FILE "bbl"
+
+// GCode states
+#define BBL_GCODE_STATE_UNKNOWN 0
+#define BBL_GCODE_STATE_IDLE    1
+#define BBL_GCODE_STATE_RUNNING 2
+#define BBL_GCODE_STATE_PAUSE   3
+#define BBL_GCODE_STATE_FINISH  4
+#define BBL_GCODE_STATE_ERROR   5
 
 /*********************************************************************************************\
  * Settings
@@ -129,74 +137,91 @@ static void BblSettingsSave(void) {
 }
 
 /*********************************************************************************************\
- * MQTT message callback
+ * MQTT message callback - lightweight field extraction
+ * BambuLab pushall responses are 10-20KB JSON, too large for full JSON parsing.
+ * We use strstr to find specific fields and extract their values directly.
 \*********************************************************************************************/
 
+// Find "key": <number> in a JSON buffer, return the number value
+static bool BblJsonGetFloat(const char *buf, const char *key, float *out) {
+  const char *p = strstr(buf, key);
+  if (!p) return false;
+  p += strlen(key);
+  // Skip '": ' or '":' after the key
+  while (*p && (*p == '"' || *p == ':' || *p == ' ')) p++;
+  if (*p == '\0') return false;
+  *out = strtof(p, nullptr);
+  return true;
+}
+
+// Find "key": <integer> in a JSON buffer
+static bool BblJsonGetInt(const char *buf, const char *key, int *out) {
+  const char *p = strstr(buf, key);
+  if (!p) return false;
+  p += strlen(key);
+  while (*p && (*p == '"' || *p == ':' || *p == ' ')) p++;
+  if (*p == '\0') return false;
+  *out = strtol(p, nullptr, 10);
+  return true;
+}
+
+// Find "key": "string" in a JSON buffer, copy to dst
+static bool BblJsonGetStr(const char *buf, const char *key, char *dst, int dst_size) {
+  const char *p = strstr(buf, key);
+  if (!p) return false;
+  p += strlen(key);
+  // Skip ': ' between key and value, but NOT the opening quote
+  while (*p && (*p == ':' || *p == ' ')) p++;
+  if (*p != '"') return false;
+  p++;  // Skip opening quote
+  const char *end = strchr(p, '"');
+  if (!end) return false;
+  int len = end - p;
+  if (len >= dst_size) len = dst_size - 1;
+  memcpy(dst, p, len);
+  dst[len] = '\0';
+  return true;
+}
+
 static void BblMqttCallback(char *topic, uint8_t *payload, unsigned int length) {
-  // Safety: payload can be very large, we only need specific fields
-  // JsonParser modifies the buffer in-place, so we need a writable copy
-  // For memory efficiency, scan for the "print" object only
   if (length < 10) return;
 
-  AddLog(LOG_LEVEL_DEBUG, PSTR("BBL: MQTT data %d"), length);
+  // Null-terminate payload in-place (PubSubClient buffer has room at bufferSize)
+  char saved = ((char*)payload)[length];
+  ((char*)payload)[length] = '\0';
+  const char *json = (const char*)payload;
 
-  // Null-terminate the payload for string operations
-  char *json = (char*)payload;
-  char saved = json[length];
-  json[length] = '\0';
-
-  JsonParser parser(json);
-  JsonParserObject root = parser.getRootObject();
-  if (!root) {
-    json[length] = saved;
+  // Only process messages containing "print" object
+  if (!strstr(json, "\"print\"")) {
+    ((char*)payload)[length] = saved;
+    AddLog(LOG_LEVEL_DEBUG, PSTR("BBL: rx %u bytes (no print data)"), length);
     return;
   }
 
-  JsonParserToken print_token = root[PSTR("print")];
-  if (!print_token) {
-    json[length] = saved;
-    return;
+  AddLog(LOG_LEVEL_DEBUG, PSTR("BBL: rx %u bytes, parsing"), length);
+
+  float f;
+  int i;
+  bool updated = false;
+
+  if (BblJsonGetFloat(json, "\"nozzle_temper\"", &f)) { bbl_state.nozzle_temp = f; updated = true; }
+  if (BblJsonGetFloat(json, "\"nozzle_target_temper\"", &f)) { bbl_state.nozzle_target = f; updated = true; }
+  if (BblJsonGetFloat(json, "\"bed_temper\"", &f)) { bbl_state.bed_temp = f; updated = true; }
+  if (BblJsonGetFloat(json, "\"bed_target_temper\"", &f)) { bbl_state.bed_target = f; updated = true; }
+  if (BblJsonGetInt(json, "\"mc_percent\"", &i)) { bbl_state.print_progress = i; updated = true; }
+  if (BblJsonGetInt(json, "\"mc_remaining_time\"", &i)) { bbl_state.remaining_min = i; updated = true; }
+  BblJsonGetStr(json, "\"gcode_state\"", bbl_state.gcode_state, sizeof(bbl_state.gcode_state));
+
+  ((char*)payload)[length] = saved;
+
+  if (updated) {
+    bbl_state.data_valid = true;
+    bbl_state.last_update = TasmotaGlobal.uptime;
+    AddLog(LOG_LEVEL_DEBUG, PSTR("BBL: nozzle=%.0f/%.0f bed=%.0f/%.0f progress=%d%% state=%s"),
+      bbl_state.nozzle_temp, bbl_state.nozzle_target,
+      bbl_state.bed_temp, bbl_state.bed_target,
+      bbl_state.print_progress, bbl_state.gcode_state);
   }
-
-  JsonParserObject print_obj = print_token.getObject();
-  if (!print_obj) {
-    json[length] = saved;
-    return;
-  }
-
-  // Extract temperature data
-  JsonParserToken t;
-
-  t = print_obj[PSTR("nozzle_temper")];
-  if (t) bbl_state.nozzle_temp = t.getFloat();
-
-  t = print_obj[PSTR("nozzle_target_temper")];
-  if (t) bbl_state.nozzle_target = t.getFloat();
-
-  t = print_obj[PSTR("bed_temper")];
-  if (t) bbl_state.bed_temp = t.getFloat();
-
-  t = print_obj[PSTR("bed_target_temper")];
-  if (t) bbl_state.bed_target = t.getFloat();
-
-  t = print_obj[PSTR("mc_percent")];
-  if (t) bbl_state.print_progress = t.getInt();
-
-  t = print_obj[PSTR("mc_remaining_time")];
-  if (t) bbl_state.remaining_min = t.getInt();
-
-  t = print_obj[PSTR("gcode_state")];
-  if (t) {
-    const char *state = t.getStr();
-    if (state) {
-      strlcpy(bbl_state.gcode_state, state, sizeof(bbl_state.gcode_state));
-    }
-  }
-
-  bbl_state.data_valid = true;
-  bbl_state.last_update = TasmotaGlobal.uptime;
-
-  json[length] = saved;
 }
 
 /*********************************************************************************************\
@@ -435,7 +460,7 @@ static void BblSendPushAll(void) {
 }
 
 /*********************************************************************************************\
- * Loop - called every second from Xdrv110
+ * Loop functions
 \*********************************************************************************************/
 
 void BblInit(void) {
@@ -444,18 +469,23 @@ void BblInit(void) {
   strcpy(bbl_state.gcode_state, "UNKNOWN");
 }
 
+// Called from FUNC_LOOP - process MQTT packets frequently
+void BblLoop(void) {
+  if (bbl_mqtt_client && bbl_state.connected) {
+    if (!bbl_mqtt_client->loop()) {
+      AddLog(LOG_LEVEL_INFO, PSTR("BBL: Connection lost"));
+      bbl_state.connected = false;
+      bbl_state.data_valid = false;
+      bbl_tls_client->stop();
+    }
+  }
+}
+
+// Called from FUNC_EVERY_SECOND - reconnect and pushall timing
 void BblEverySecond(void) {
   if (!BblIsConfigured()) return;
 
   if (bbl_mqtt_client && bbl_state.connected) {
-    // Process incoming messages
-    if (!bbl_mqtt_client->loop()) {
-      // Connection lost
-      AddLog(LOG_LEVEL_INFO, PSTR("BBL: Connection lost"));
-      bbl_state.connected = false;
-      bbl_state.data_valid = false;
-    }
-
     // Periodic pushall to keep data fresh
     if (bbl_state.connected &&
         (TasmotaGlobal.uptime - bbl_state.last_pushall >= BBL_PUSHALL_INTERVAL)) {
@@ -653,6 +683,44 @@ void BblShowJson(bool append) {
     bbl_state.bed_temp, bbl_state.bed_target,
     bbl_state.print_progress, bbl_state.remaining_min,
     bbl_state.gcode_state);
+}
+
+float BblGetNozzleTemp() {
+  return bbl_state.nozzle_temp;
+}
+
+uint8_t BblGetProgress() {
+  return bbl_state.print_progress;
+}
+
+uint8_t BblGetGCodeStatus() {
+  if (!bbl_state.data_valid) return BBL_GCODE_STATE_UNKNOWN;
+
+  if (strcmp(bbl_state.gcode_state, "IDLE") == 0) return BBL_GCODE_STATE_IDLE;
+  if (strcmp(bbl_state.gcode_state, "RUNNING") == 0) return BBL_GCODE_STATE_RUNNING;
+  if (strcmp(bbl_state.gcode_state, "PAUSE") == 0) return BBL_GCODE_STATE_PAUSE;
+  if (strcmp(bbl_state.gcode_state, "FINISH") == 0) return BBL_GCODE_STATE_FINISH;
+  // if (strcmp(bbl_state.gcode_state, "ERROR") == 0) return BBL_GCODE_STATE_ERROR;
+
+  return BBL_GCODE_STATE_UNKNOWN;
+}
+
+bool BblStatusIsError() {
+  if (!bbl_state.data_valid) return true; // No-data == error
+  if (BblGetGCodeStatus() == BBL_GCODE_STATE_PAUSE) return true;
+  return false;
+}
+
+bool BblStatusIsRunning() {
+  if (!bbl_state.data_valid) return false;
+  if (BblGetGCodeStatus() == BBL_GCODE_STATE_RUNNING) return true;
+  return false;
+}
+
+bool BblStatusIsFinished() {
+  if (!bbl_state.data_valid) return false;
+  if (BblGetGCodeStatus() == BBL_GCODE_STATE_FINISH) return true;
+  return false;
 }
 
 #endif  // USE_GALOPED
