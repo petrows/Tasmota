@@ -295,6 +295,16 @@ void GalopedPage(void) {
   WSContentSeparatorIThin();
   // WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>OK</b>" TABLE_INFO_ROW_END));
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GalopedFwVerion());
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Axis" TABLE_INFO_ROW_MID "%d" TABLE_INFO_ROW_END), GALOPED_AXIS);
+  const char * backlight_mode = "?";
+  if (GALOPED_BACKLIGHT == GALOPED_BACKLIGHT_RGB) {
+    backlight_mode = "RGB";
+  }
+  if (GALOPED_BACKLIGHT == GALOPED_BACKLIGHT_RETRO) {
+    backlight_mode = "Retro";
+  }
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Backlight" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), backlight_mode);
+
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Chipset" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GetDeviceHardwareRevision().c_str());
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FRAM" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END),
     GalopedFramInitilized() ? "Yes" : "No"
