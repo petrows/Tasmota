@@ -12,21 +12,23 @@
 */
 
 /*
-  OctoPrint REST API polling.
-  Endpoints used:
+  OctoPrint REST API polling using raw WiFiClient (no HTTPClientLight
+  to avoid Berry/I2C compile conflicts in Tasmota).
+
+  Endpoints:
     GET /api/printer   -> tool0.actual, tool0.target, bed.actual, bed.target
     GET /api/job       -> progress.completion, progress.printTimeLeft, state
   Auth: X-Api-Key header
 */
 
 #ifdef USE_GALOPED
-
-#include <HttpClientLight.h>
+// #ifdef USE_GALOPED_OCTO
 
 #define OCTO_POLL_SEC        5
 #define OCTO_RECONNECT_SEC   30
-#define OCTO_HTTP_TIMEOUT    5000  // ms
+#define OCTO_TIMEOUT_MS      5000
 #define OCTO_DEFAULT_PORT    80
+#define OCTO_BUF_SIZE        1024
 
 class GalopedPrinterOctoprint : public GalopedPrinter {
 public:
@@ -35,13 +37,10 @@ public:
     memset(_api_key, 0, sizeof(_api_key));
     _port = OCTO_DEFAULT_PORT;
     _last_poll = 0;
-    _last_fail = 0;
     _fail_count = 0;
   }
 
-  ~GalopedPrinterOctoprint() override {
-    disconnect();
-  }
+  ~GalopedPrinterOctoprint() override { disconnect(); }
 
   uint8_t type() override { return PRINTER_TYPE_OCTOPRINT; }
   const char* typeName() override { return "Octo"; }
@@ -63,24 +62,13 @@ public:
   }
 
   void begin() override {}
-
-  void disconnect() override {
-    status.connected = false;
-    status.data_valid = false;
-  }
-
-  void loop() override {
-    // HTTP polling is slow, handled in everySecond only
-  }
+  void disconnect() override { status.connected = false; status.data_valid = false; }
+  void loop() override {}
 
   void everySecond() override {
-    if (!isConfigured()) return;
-    if (!WifiHasIP()) return;
-
-    // Backoff on repeated failures
+    if (!isConfigured() || !WifiHasIP()) return;
     uint32_t interval = (_fail_count > 3) ? OCTO_RECONNECT_SEC : OCTO_POLL_SEC;
     if (TasmotaGlobal.uptime - _last_poll < interval) return;
-
     _last_poll = TasmotaGlobal.uptime;
     pollPrinter();
     pollJob();
@@ -108,105 +96,102 @@ private:
   char     _api_key[64];
   uint16_t _port;
   uint32_t _last_poll;
-  uint32_t _last_fail;
   uint8_t  _fail_count;
 
-  bool isConfigured() {
-    return strlen(_host) > 0 && strlen(_api_key) > 0;
-  }
+  bool isConfigured() { return strlen(_host) > 0 && strlen(_api_key) > 0; }
 
-  // GET an OctoPrint API endpoint, return response body or empty on error
+  // Raw HTTP GET using WiFiClient - returns body or empty string
   String httpGet(const char *path) {
-    HTTPClientLight http;
-    char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d%s", _host, _port, path);
+    WiFiClient client;
+    String body;
 
-    http.begin(url);
-    http.addHeader("X-Api-Key", _api_key);
-    http.setTimeout(OCTO_HTTP_TIMEOUT);
-
-    int code = http.GET();
-    String result;
-    if (code == 200) {
-      result = http.getString();
-      status.connected = true;
-      _fail_count = 0;
-    } else {
-      if (status.connected) {
-        AddLog(LOG_LEVEL_DEBUG, PSTR("OCTO[%d]: HTTP %d from %s"), _slot, code, path);
-      }
+    if (!client.connect(_host, _port)) {
       _fail_count++;
-      if (_fail_count > 3) {
-        status.connected = false;
-        status.data_valid = false;
-      }
+      if (_fail_count > 3) { status.connected = false; status.data_valid = false; }
+      return body;
     }
-    http.end();
-    return result;
+
+    // Send request
+    client.printf("GET %s HTTP/1.1\r\n", path);
+    client.printf("Host: %s:%d\r\n", _host, _port);
+    client.printf("X-Api-Key: %s\r\n", _api_key);
+    client.print("Connection: close\r\n\r\n");
+
+    // Wait for response
+    uint32_t start = millis();
+    while (!client.available() && millis() - start < OCTO_TIMEOUT_MS) {
+      delay(10);
+    }
+    if (!client.available()) {
+      client.stop();
+      _fail_count++;
+      return body;
+    }
+
+    // Skip HTTP headers
+    bool headers_done = false;
+    while (client.available()) {
+      String line = client.readStringUntil('\n');
+      if (!headers_done) {
+        if (line.length() <= 2) { headers_done = true; continue; }
+        // Check status code in first line
+        if (line.startsWith("HTTP/") && !line.substring(9, 12).equals("200")) {
+          AddLog(LOG_LEVEL_DEBUG, PSTR("OCTO[%d]: HTTP error from %s"), _slot, path);
+          client.stop();
+          _fail_count++;
+          return body;
+        }
+        continue;
+      }
+      body += line;
+      // Limit body size
+      if (body.length() > OCTO_BUF_SIZE) break;
+    }
+    client.stop();
+
+    status.connected = true;
+    _fail_count = 0;
+    return body;
   }
 
-  // GET /api/printer -> temperatures
   void pollPrinter() {
     String body = httpGet("/api/printer");
     if (body.length() == 0) return;
-
-    // Lightweight extraction — OctoPrint JSON is ~500 bytes, manageable
     char *buf = (char*)body.c_str();
     float f;
 
-    // tool0 temperatures: "tool0":{"actual":210.0,"target":210.0,...}
     const char *tool0 = strstr(buf, "\"tool0\"");
     if (tool0) {
-      if (BblJsonGetFloat(tool0, "\"actual\"", &f))  status.nozzle_temp = f;
-      if (BblJsonGetFloat(tool0, "\"target\"", &f))  status.nozzle_target = f;
+      if (BblJsonGetFloat(tool0, "\"actual\"", &f)) status.nozzle_temp = f;
+      if (BblJsonGetFloat(tool0, "\"target\"", &f)) status.nozzle_target = f;
     }
-
-    // bed temperatures: "bed":{"actual":60.0,"target":60.0,...}
-    // Be careful: search from start for "bed" (not inside tool0)
     const char *bed = strstr(buf, "\"bed\"");
     if (bed) {
-      if (BblJsonGetFloat(bed, "\"actual\"", &f))  status.bed_temp = f;
-      if (BblJsonGetFloat(bed, "\"target\"", &f))  status.bed_target = f;
+      if (BblJsonGetFloat(bed, "\"actual\"", &f)) status.bed_temp = f;
+      if (BblJsonGetFloat(bed, "\"target\"", &f)) status.bed_target = f;
     }
-
     status.data_valid = true;
     status.last_update = TasmotaGlobal.uptime;
   }
 
-  // GET /api/job -> progress and state
   void pollJob() {
     String body = httpGet("/api/job");
     if (body.length() == 0) return;
-
     char *buf = (char*)body.c_str();
-    float f;
-    int i;
+    float f; int i;
 
-    // "completion": 45.2
-    if (BblJsonGetFloat(buf, "\"completion\"", &f)) {
-      status.progress = (uint8_t)f;
-    }
+    if (BblJsonGetFloat(buf, "\"completion\"", &f)) status.progress = (uint8_t)f;
+    if (BblJsonGetInt(buf, "\"printTimeLeft\"", &i)) status.remaining_min = (i > 0) ? (i / 60) : 0;
 
-    // "printTimeLeft": 1234  (seconds)
-    if (BblJsonGetInt(buf, "\"printTimeLeft\"", &i)) {
-      status.remaining_min = (i > 0) ? (i / 60) : 0;
-    }
-
-    // "state": "Printing" / "Operational" / "Paused" / "Error" / "Finishing"
     char state_str[20] = "";
     if (BblJsonGetStr(buf, "\"state\"", state_str, sizeof(state_str))) {
-      if      (strcmp(state_str, "Printing") == 0 || strcmp(state_str, "Cancelling") == 0)
-        status.state = PRINTER_STATE_RUNNING;
-      else if (strcmp(state_str, "Operational") == 0)
-        status.state = PRINTER_STATE_IDLE;
-      else if (strcmp(state_str, "Pausing") == 0 || strcmp(state_str, "Paused") == 0)
-        status.state = PRINTER_STATE_PAUSE;
-      else if (strcmp(state_str, "Finishing") == 0)
-        status.state = PRINTER_STATE_FINISH;
-      else if (strstr(state_str, "Error"))
-        status.state = PRINTER_STATE_ERROR;
-      else
-        status.state = PRINTER_STATE_UNKNOWN;
+      if      (strcmp(state_str, "Printing") == 0)    status.state = PRINTER_STATE_RUNNING;
+      else if (strcmp(state_str, "Operational") == 0)  status.state = PRINTER_STATE_IDLE;
+      else if (strcmp(state_str, "Paused") == 0 || strcmp(state_str, "Pausing") == 0)
+                                                       status.state = PRINTER_STATE_PAUSE;
+      else if (strcmp(state_str, "Finishing") == 0)     status.state = PRINTER_STATE_FINISH;
+      else if (strstr(state_str, "Error"))             status.state = PRINTER_STATE_ERROR;
+      else                                             status.state = PRINTER_STATE_UNKNOWN;
     }
 
     AddLog(LOG_LEVEL_DEBUG, PSTR("OCTO[%d]: nozzle=%.0f/%.0f bed=%.0f/%.0f %d%% %s"),
@@ -215,4 +200,5 @@ private:
   }
 };
 
+// #endif  // USE_GALOPED_OCTO
 #endif  // USE_GALOPED
