@@ -705,6 +705,10 @@ uint8_t BblGetGCodeStatus() {
   return BBL_GCODE_STATE_UNKNOWN;
 }
 
+bool BblStatusIsValid() {
+  return bbl_state.data_valid;
+}
+
 bool BblStatusIsError() {
   if (!bbl_state.data_valid) return true; // No-data == error
   if (BblGetGCodeStatus() == BBL_GCODE_STATE_PAUSE) return true;

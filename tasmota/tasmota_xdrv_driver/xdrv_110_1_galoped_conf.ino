@@ -340,9 +340,7 @@ void GalopedConfigPage(void) {
   WSContentSend_P(PSTR("<form method='get' action='" WEB_HANDLE_GALOPED_CFG "'>"));
   WSContentSend_P(PSTR("<p><b>RGB Mode</b><br><select id='rm' name='rm'>"));
   WSContentSend_P(PSTR("<option value='%d'%s>Static</option>"), GALOPED_RGB_STATIC, (galoped_settings.rgb_mode == GALOPED_RGB_STATIC) ? " selected" : "");
-  //if (GALOPED_DISPLAY_CO2 == galoped_info.display_mode) {
-    WSContentSend_P(PSTR("<option value='%d'%s>Dynamic (from value)</option>"), GALOPED_RGB_DYNAMIC, (galoped_settings.rgb_mode == GALOPED_RGB_DYNAMIC) ? " selected" : "");
-  //}
+  WSContentSend_P(PSTR("<option value='%d'%s>Dynamic (from value)</option>"), GALOPED_RGB_DYNAMIC, (galoped_settings.rgb_mode == GALOPED_RGB_DYNAMIC) ? " selected" : "");
   WSContentSend_P(PSTR("<option value='%d'%s>Gradient</option>"), GALOPED_RGB_GRADIENT, (galoped_settings.rgb_mode == GALOPED_RGB_GRADIENT) ? " selected" : "");
   WSContentSend_P(PSTR("</select></p>"));
   WSContentSend_P(PSTR("<br><button name='save' type='submit' class='button bgrn'>" D_SAVE "</button>"));
@@ -357,6 +355,7 @@ void GalopedConfigPage(void) {
  *
  */
 bool GalopedStatusWeb(void) {
+  bool gauges_set = false;
   WSContentSend_PD(HTTP_TABLE100);
   for (int x=0; x < GALOPED_GAUGES_NUM; x++) {
     GalopedGauge * gauge = &galoped_gauges[x];
@@ -364,7 +363,11 @@ bool GalopedStatusWeb(void) {
       WSContentSend_PD(PSTR("{s}&#8599; %s {m}<b>%d</b> %s{e}"),
         gauge->name, gauge->value, gauge->unit
       );
+      gauges_set = true;
     }
+  }
+  if (gauges_set && BblStatusIsValid()) {
+    WSContentSeparatorIThin();
   }
   BblStatusWeb();
   WSContentSend_PD(PSTR("</table>"));
