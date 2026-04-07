@@ -594,11 +594,13 @@ void GalopedLoop(void) {
       GalopedCommandValue(2, progress);
 
       // Update color?
-      if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
-        const char * color_hs = PrinterGetStatusColorHS(slot);
-        if (color_hs) {
-          snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), color_hs);
-          ExecuteCommand(galoped_buf, SRC_SENSOR);
+      if (PrinterisStateChanged(slot)) {
+        if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
+          const char * color_hs = PrinterGetStatusColorHS(slot);
+          if (color_hs) {
+            snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), color_hs);
+            ExecuteCommand(galoped_buf, SRC_SENSOR);
+          }
         }
       }
     }
@@ -617,11 +619,13 @@ void GalopedLoop(void) {
         // Execute command gauge 1
         GalopedCommandValue(slot + 1, progress);
         // Update color?
-        if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
-          const char * color_hs = PrinterGetStatusColorHS(slot);
-          if (color_hs) {
-            snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), color_hs);
-            ExecuteCommand(galoped_buf, SRC_SENSOR);
+        if (PrinterisStateChanged(slot)) {
+          if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
+            const char * color_hs = PrinterGetStatusColorHS(slot);
+            if (color_hs) {
+              snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), color_hs);
+              ExecuteCommand(galoped_buf, SRC_SENSOR);
+            }
           }
         }
       }

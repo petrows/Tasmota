@@ -59,7 +59,9 @@ class GalopedPrinter {
 public:
   GalopedPrinter(uint8_t slot) : _slot(slot) {
     memset(&status, 0, sizeof(status));
+    memset(&status_prev, 0, sizeof(status_prev));
     status.state = PRINTER_STATE_UNKNOWN;
+    state_prev = PRINTER_STATE_UNKNOWN;
   }
 
   virtual ~GalopedPrinter() {}
@@ -84,6 +86,8 @@ public:
   PrinterStatus status;
   // Previous status
   PrinterStatus status_prev;
+  // Previous state (running, idle)
+  uint8_t state_prev;
 
   // State query helpers
   bool isRunning() {
@@ -108,7 +112,7 @@ public:
     return status.data_valid && status.state == PRINTER_STATE_IDLE;
   }
 
-  // Checks and updates status, if changed
+  // Checks and updates data, if changed
   bool isDataChanged() {
     if (
          status.bed_temp != status_prev.bed_target
@@ -119,6 +123,15 @@ public:
     ) {
       // Data changed!
       status_prev = status;
+      return true;
+    }
+    return false;
+  }
+
+  // Checks and updates status, if changed
+  bool isStateChanged() {
+    if (status.state != state_prev) {
+      state_prev = status.state;
       return true;
     }
     return false;

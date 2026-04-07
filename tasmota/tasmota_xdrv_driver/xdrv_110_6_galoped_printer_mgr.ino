@@ -431,6 +431,14 @@ bool PrinterisDataChanged(uint8_t slot) {
   return p->isDataChanged();
 }
 
+bool PrinterisStateChanged(uint8_t slot) {
+  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
+  if (!p) {
+    return false;
+  }
+  return p->isStateChanged();
+}
+
 float PrinterGetNozzleTemp(uint8_t slot) {
   GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
   if (!p) {
