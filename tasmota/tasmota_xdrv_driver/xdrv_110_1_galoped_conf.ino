@@ -342,7 +342,7 @@ void GalopedPage(void) {
   const char * galoped_func = "None";
   switch (galoped_info.display_mode)
   {
-    case GALOPED_DISPLAY_NONE:
+    case GALOPED_DISPLAY_CO2:
       galoped_func = "CO2";
       break;
     case GALOPED_DISPLAY_3DP_TP:
