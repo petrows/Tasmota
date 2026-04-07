@@ -8,9 +8,17 @@
 
 #ifdef USE_GALOPED
 
-// ─── Factory ─────────────────────────────────────────────────────────────────
+struct GalopedPrinter;
 
-static GalopedPrinter* PrinterCreate(uint8_t ptype, uint8_t slot) {
+// ─── Factory ─────────────────────────────────────────────────────────────────
+/**
+ * @brief Create printer object
+ *
+ * @param ptype
+ * @param slot
+ * @return void* the GalopedPrinter* object (we have to use void due to broken fw-decl in ino)
+ */
+static void* PrinterCreate(uint8_t ptype, uint8_t slot) {
   switch (ptype) {
     case PRINTER_TYPE_BAMBULAB:  return new GalopedPrinterBBL(slot);
     case PRINTER_TYPE_OCTOPRINT: return new GalopedPrinterOctoprint(slot);
@@ -32,7 +40,7 @@ static void PrinterLoadSlot(uint8_t slot) {
   if (!strcmp(ts,"bambulab")) pt=PRINTER_TYPE_BAMBULAB;
   else if (!strcmp(ts,"octoprint")) pt=PRINTER_TYPE_OCTOPRINT;
   if (pt==PRINTER_TYPE_NONE) { f.close(); return; }
-  GalopedPrinter *p = PrinterCreate(pt,slot);
+  GalopedPrinter *p = (GalopedPrinter*)PrinterCreate(pt,slot);
   if (!p) { f.close(); return; }
   f.seek(0);
   p->prtLoadSettings(f);
@@ -63,7 +71,7 @@ void PrinterInit(void)        { for (uint8_t i=0;i<GALOPED_PRINTER_MAX;i++) Prin
 void PrinterLoop(void)        { for (uint8_t i=0;i<GALOPED_PRINTER_MAX;i++) if (galoped_printers[i]) galoped_printers[i]->prtLoop(); }
 void PrinterEverySecond(void) { for (uint8_t i=0;i<GALOPED_PRINTER_MAX;i++) if (galoped_printers[i]) galoped_printers[i]->prtEverySecond(); }
 
-static GalopedPrinter* PrinterGet(uint8_t slot) {
+static void* PrinterGet(uint8_t slot) {
   return (slot<GALOPED_PRINTER_MAX) ? galoped_printers[slot] : nullptr;
 }
 
@@ -83,7 +91,7 @@ void PrinterConfigPage(void) {
     uint8_t nt=atoi(tmp);
     if (galoped_printers[slot]) { galoped_printers[slot]->prtDisconnect(); delete galoped_printers[slot]; galoped_printers[slot]=nullptr; }
     if (nt!=PRINTER_TYPE_NONE) {
-      GalopedPrinter *p=PrinterCreate(nt,slot);
+      GalopedPrinter *p=(GalopedPrinter*)PrinterCreate(nt,slot);
       if (p) { p->prtWebFormSave(); galoped_printers[slot]=p; PrinterSaveSlot(slot); p->prtBegin(); }
     } else { PrinterSaveSlot(slot); }
     HandleConfiguration(); return;
@@ -174,13 +182,13 @@ void PrinterShowJson(void) {
 
 // ─── Compatibility wrappers (slot 0 for galoped_conf.ino) ────────────────────
 
-bool BblStatusIsValid()    { GalopedPrinter *p=PrinterGet(0); return p && p->status.data_valid; }
-bool BblStatusIsRunning()  { GalopedPrinter *p=PrinterGet(0); return p && p->isRunning(); }
-bool BblStatusIsFinished() { GalopedPrinter *p=PrinterGet(0); return p && p->isFinished(); }
-bool BblStatusIsError()    { GalopedPrinter *p=PrinterGet(0); return !p || p->isError(); }
-float BblGetNozzleTemp()   { GalopedPrinter *p=PrinterGet(0); return p ? p->status.nozzle_temp : 0; }
-uint8_t BblGetProgress()   { GalopedPrinter *p=PrinterGet(0); return p ? p->status.progress : 0; }
-uint8_t BblGetGCodeStatus(){ GalopedPrinter *p=PrinterGet(0); return p ? p->status.state : PRINTER_STATE_UNKNOWN; }
+bool BblStatusIsValid()    { GalopedPrinter *p=(GalopedPrinter*)PrinterGet(0); return p && p->status.data_valid; }
+bool BblStatusIsRunning()  { GalopedPrinter *p=(GalopedPrinter*)PrinterGet(0); return p && p->isRunning(); }
+bool BblStatusIsFinished() { GalopedPrinter *p=(GalopedPrinter*)PrinterGet(0); return p && p->isFinished(); }
+bool BblStatusIsError()    { GalopedPrinter *p=(GalopedPrinter*)PrinterGet(0); return !p || p->isError(); }
+float BblGetNozzleTemp()   { GalopedPrinter *p=(GalopedPrinter*)PrinterGet(0); return p ? p->status.nozzle_temp : 0; }
+uint8_t BblGetProgress()   { GalopedPrinter *p=(GalopedPrinter*)PrinterGet(0); return p ? p->status.progress : 0; }
+uint8_t BblGetGCodeStatus(){ GalopedPrinter *p=(GalopedPrinter*)PrinterGet(0); return p ? p->status.state : PRINTER_STATE_UNKNOWN; }
 bool BblStatusWeb(void)    { return PrinterStatusWeb(); }
 
 #endif  // USE_GALOPED
