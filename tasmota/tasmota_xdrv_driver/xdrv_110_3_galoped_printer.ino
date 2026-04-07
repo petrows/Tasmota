@@ -115,13 +115,12 @@ public:
   // Checks and updates data, if changed
   bool isDataChanged() {
     if (
-         status.bed_temp != status_prev.bed_target
+         status.bed_temp != status_prev.bed_temp
       || status.nozzle_temp != status_prev.nozzle_temp
       || status.progress != status_prev.progress
       || status.remaining_min != status_prev.remaining_min
       || status.state != status_prev.state
     ) {
-      // Data changed!
       status_prev = status;
       return true;
     }
