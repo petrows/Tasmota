@@ -51,6 +51,7 @@ struct GalopedSettings {
 };
 
 static GalopedSettings galoped_settings;
+static uint32_t galoped_settings_crc;
 
 // Device indicator mode
 #define GALOPED_DISPLAY_NONE  0 // No automation, just indicator
@@ -103,26 +104,36 @@ static void GalopedSettingsLoad(bool erase) {
 
   file.close();
 
-  AddLog(LOG_LEVEL_INFO, PSTR("GAL: Settings loaded, rgb_mode=%d"),
-         galoped_settings.rgb_mode);
+  uint32_t galoped_settings_crc = GetCfgCrc32((uint8_t*)&galoped_settings, sizeof(galoped_settings));
+
+  AddLog(LOG_LEVEL_INFO, PSTR("GAL: Settings loaded, rgb_mode=%d, crc=%d"),
+    galoped_settings.rgb_mode,
+    galoped_settings_crc
+  );
 #endif  // USE_UFILESYS
 }
 
 static void GalopedSettingsSave(void) {
-#ifdef USE_UFILESYS
-  String ini;
-  ini += "[settings]\n";
-  ini += "rgb_mode=";  ini += galoped_settings.rgb_mode;  ini += "\n";
+  // Called from FUNC_SAVE_SETTINGS every SaveData second and at restart
+  uint32_t crc32 = GetCfgCrc32((uint8_t*)&galoped_settings, sizeof(galoped_settings));
 
-  File file = LittleFS.open(GALOPED_SETTINGS_FILE, "w");
-  if (file) {
-    file.print(ini);
-    file.close();
-    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Settings saved"));
-  } else {
-    AddLog(LOG_LEVEL_ERROR, PSTR("GAL: Settings save failed"));
+#ifdef USE_UFILESYS
+  // Keep flash untouched, if no changes
+  if (galoped_settings_crc != crc32) {
+    String ini;
+    ini += "[settings]\n";
+    ini += "rgb_mode=";  ini += galoped_settings.rgb_mode;  ini += "\n";
+    File file = LittleFS.open(GALOPED_SETTINGS_FILE, "w");
+    if (file) {
+      file.print(ini);
+      file.close();
+      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Settings saved"));
+    } else {
+      AddLog(LOG_LEVEL_ERROR, PSTR("GAL: Settings save failed"));
+    }
   }
 #endif  // USE_UFILESYS
+  galoped_settings_crc = crc32;
 }
 
 static bool GalopedSettingsRestore(void) {
