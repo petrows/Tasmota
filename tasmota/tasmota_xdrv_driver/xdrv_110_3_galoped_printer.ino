@@ -36,6 +36,7 @@
 struct PrinterStatus {
   bool     connected;       // Connection to printer is active
   bool     data_valid;      // At least one successful data read
+  bool     data_changed;    // Data was updated (Temperature, Progress, etc)
   float    nozzle_temp;     // Current nozzle temperature (C)
   float    nozzle_target;   // Target nozzle temperature (C)
   float    bed_temp;        // Current bed temperature (C)
@@ -81,6 +82,8 @@ public:
 
   // Current status
   PrinterStatus status;
+  // Previous status
+  PrinterStatus status_prev;
 
   // State query helpers
   bool isRunning() {
@@ -97,8 +100,36 @@ public:
            status.state == PRINTER_STATE_ERROR;
   }
 
+  bool isValid() {
+    return status.data_valid;
+  }
+
   bool isIdle() {
     return status.data_valid && status.state == PRINTER_STATE_IDLE;
+  }
+
+  // Checks and updates status, if changed
+  bool isDataChanged() {
+    if (
+         status.bed_temp != status_prev.bed_target
+      || status.nozzle_temp != status_prev.nozzle_temp
+      || status.progress != status_prev.progress
+      || status.remaining_min != status_prev.remaining_min
+      || status.state != status_prev.state
+    ) {
+      // Data changed!
+      status_prev = status;
+      return true;
+    }
+    return false;
+  }
+
+  float getNozzleTemp() {
+    return status.nozzle_temp;
+  }
+
+  uint8_t getProgress() {
+    return status.progress;
   }
 
   // State as human-readable string
@@ -111,6 +142,19 @@ public:
       case PRINTER_STATE_ERROR:   return "ERROR";
       default:                    return "UNKNOWN";
     }
+  }
+
+  // State as H-S color (without brightness)
+  const char* stateColorHS() {
+    switch (status.state) {
+      case PRINTER_STATE_IDLE:
+      case PRINTER_STATE_FINISH:
+        return "116,100"; // Green
+      case PRINTER_STATE_RUNNING:
+        return "42,100"; // Yellow
+    }
+    // Default:
+    return "0,100"; // Red
   }
 
   uint8_t prtSlot() { return _slot; }

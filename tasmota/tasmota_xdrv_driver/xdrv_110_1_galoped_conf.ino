@@ -58,6 +58,8 @@ static GalopedSettings galoped_settings;
 #define GALOPED_DISPLAY_NONE  0 // No automation, just indicator
 #define GALOPED_DISPLAY_CO2   1 // Display CO2 level
 #define GALOPED_DISPLAY_3DP_TP   2 // Display 3D printer biaxial (Temp+Progress)
+#define GALOPED_DISPLAY_3DP_P    3 // Display 3D printer monoaxial (Progress)
+#define GALOPED_DISPLAY_3DP_PP   4 // Display 3D printer biaxial (Progress+Progress)
 
 
 /*********************************************************************************************\
@@ -182,8 +184,18 @@ static void GalopedReadInfoFile(void) {
   }
   if (strcmp(buf, "3dp_tp") == 0) {
     // Standart Galoped CO2 meter
-    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: BambuLab printer (Temperature + Progress)"));
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: 3D Printer (Temperature + Progress)"));
     galoped_info.display_mode = GALOPED_DISPLAY_3DP_TP;
+  }
+  if (strcmp(buf, "3dp_p") == 0) {
+    // Standart Galoped CO2 meter
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: 3D Printer (Progress)"));
+    galoped_info.display_mode = GALOPED_DISPLAY_3DP_P;
+  }
+  if (strcmp(buf, "3dp_pp") == 0) {
+    // Standart Galoped CO2 meter
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: 3D Printer (Progress + Progress)"));
+    galoped_info.display_mode = GALOPED_DISPLAY_3DP_PP;
   }
 
   // Reset Gauges info
@@ -376,10 +388,8 @@ bool GalopedStatusWeb(void) {
       gauges_set = true;
     }
   }
-  if (gauges_set && BblStatusIsValid()) {
-    WSContentSeparatorIThin();
-  }
-  BblStatusWeb();
+  WSContentSeparatorIThin();
+  PrinterStatusWeb();
   WSContentSend_PD(PSTR("</table>"));
   return true;
 }
@@ -517,39 +527,52 @@ void GalopedLoop(void) {
   }
   // 3D printer indicator ->
   if (GALOPED_DISPLAY_3DP_TP == galoped_info.display_mode) {
-    uint8_t status = BblGetGCodeStatus();
-    uint8_t progress = BblGetProgress();
-    int32_t temperature = BblGetNozzleTemp();
-    // Trigger on-change only (progress)
-    if (temperature != galoped_bbl_temperature) {
-      galoped_bbl_temperature = temperature;
-      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: BBL temperature changed to %d"), (int)temperature);
-      // Execute command
+    // This is Single-printer, Bi-Axial display (Temperature+Progress)
+    uint8_t slot = 0;
+    if (PrinterisDataChanged(slot)) {
+      // Status changed, reload logic
+      uint8_t progress = PrinterGetProgress(slot);
+      int32_t temperature = PrinterGetNozzleTemp(slot);
+      const char* status = PrinterGetStatusStr(slot);
+      AddLog(LOG_LEVEL_DEBUG, PSTR("PRT: Printer status change: status %s, temperature: %d, progress: %d"),
+        status, temperature, (int)progress
+      );
+      // Execute command gauge 1
       GalopedCommandValue(1, temperature);
-    }
-    // Trigger on-change only (progress)
-    if (progress != galoped_bbl_progress) {
-      galoped_bbl_progress = progress;
-      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: BBL progress changed to %d"), (int)progress);
-      // Execute command
+      // Execute command gauge 2
       GalopedCommandValue(2, progress);
-    }
-    // Trigger on-change only (status)
-    if (status != galoped_bbl_status) {
-      galoped_bbl_status = status;
-      AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: BBL state changed to %d"), status);
-      // Update Backlight color (hue only, preserving user brightness)
+
+      // Update color?
       if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
-        const char * bbl_color = "";
-        if (BblStatusIsFinished()) {
-          bbl_color = "116,100"; // Green
-        } else if (BblStatusIsRunning()) {
-          bbl_color = "42,100"; // Yellow
-        } else {
-          bbl_color = "0,100"; // Red
+        const char * color_hs = PrinterGetStatusColorHS(slot);
+        if (color_hs) {
+          snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), color_hs);
+          ExecuteCommand(galoped_buf, SRC_SENSOR);
         }
-        snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), bbl_color);
-        ExecuteCommand(galoped_buf, SRC_SENSOR);
+      }
+    }
+  }
+  if (GALOPED_DISPLAY_3DP_P == galoped_info.display_mode || GALOPED_DISPLAY_3DP_PP == galoped_info.display_mode) {
+    // This is Printer Progress only (Progress or Progress+Progress)
+    uint8_t slot_max = (GALOPED_DISPLAY_3DP_P == galoped_info.display_mode) ? 1 : 2;
+    for (uint8_t slot=0; slot<slot_max; slot++) {
+      if (PrinterisDataChanged(slot)) {
+        // Status changed, reload logic
+        uint8_t progress = PrinterGetProgress(slot);
+        const char* status = PrinterGetStatusStr(slot);
+        AddLog(LOG_LEVEL_DEBUG, PSTR("PRT: Printer %d status change: status %s, progress: %d"),
+          (int)slot, status, (int)progress
+        );
+        // Execute command gauge 1
+        GalopedCommandValue(slot + 1, progress);
+        // Update color?
+        if (light_on && GALOPED_RGB_DYNAMIC == galoped_settings.rgb_mode) {
+          const char * color_hs = PrinterGetStatusColorHS(slot);
+          if (color_hs) {
+            snprintf_P(galoped_buf, galoped_buf_size, PSTR("HSBColor %s"), color_hs);
+            ExecuteCommand(galoped_buf, SRC_SENSOR);
+          }
+        }
       }
     }
   }

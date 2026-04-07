@@ -105,7 +105,6 @@ bool Xdrv110(uint32_t function) {
 
     case FUNC_WEB_SENSOR:
       result = GalopedStatusWeb();
-      PrinterStatusWeb();
       break;
 
     case FUNC_JSON_APPEND:

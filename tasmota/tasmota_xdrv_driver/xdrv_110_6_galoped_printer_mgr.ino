@@ -331,6 +331,9 @@ bool PrinterStatusWeb(void) {
     GalopedPrinter *p = galoped_printers[i];
     if (!p || !p->status.data_valid) continue;
 
+    // Printer ID
+    WSContentSend_P(PSTR("{s}Printer %d{m} {e}"), (int)(p->prtSlot() + 1));
+
     has_data = true;
     const char *name = p->prtTypeName();
 
@@ -338,17 +341,17 @@ bool PrinterStatusWeb(void) {
     const char *temp_color = p->status.nozzle_temp > 200 ? "#F44" :
                              p->status.nozzle_temp > 100 ? "#FA0" : "#4F4";
 
-    WSContentSend_P(PSTR("{s}%s Nozzle{m}<span style='color:%s'>%.0f</span>/%.0f°C{e}"),
+    WSContentSend_P(PSTR("{s}%s Nozzle{m}<span style='color:%s'>%.0f</span>/%.0f °C{e}"),
       name, temp_color, p->status.nozzle_temp, p->status.nozzle_target);
 
     // Bed temperature
-    WSContentSend_P(PSTR("{s}%s Bed{m}%.0f/%.0f°C{e}"),
+    WSContentSend_P(PSTR("{s}%s Bed{m}%.0f/%.0f °C{e}"),
       name, p->status.bed_temp, p->status.bed_target);
 
     // Progress and ETA (only when printing)
     if (p->status.state != PRINTER_STATE_IDLE &&
         p->status.state != PRINTER_STATE_UNKNOWN) {
-      WSContentSend_P(PSTR("{s}%s Progress{m}%d%%{e}"), name, p->status.progress);
+      WSContentSend_P(PSTR("{s}%s Progress{m}%d %%{e}"), name, p->status.progress);
 
       if (p->status.remaining_min > 0) {
         uint16_t hours = p->status.remaining_min / 60;
@@ -393,51 +396,52 @@ void PrinterShowJson(void) {
 
 #endif  // USE_WEBSERVER
 
-/*********************************************************************************************\
- * Compatibility wrappers
- *
- * These functions provide backward compatibility for galoped_conf.ino,
- * which accesses printer data via the old Bbl* function names.
- * All wrappers use printer slot 0 (primary printer).
-\*********************************************************************************************/
-
-bool BblStatusIsValid() {
-  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(0);
-  return p && p->status.data_valid;
+bool PrinterIsValid(uint8_t slot) {
+  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
+  if (!p) {
+    return false;
+  }
+  return p->isValid();
 }
 
-bool BblStatusIsRunning() {
-  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(0);
-  return p && p->isRunning();
+bool PrinterisDataChanged(uint8_t slot) {
+  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
+  if (!p) {
+    return false;
+  }
+  return p->isDataChanged();
 }
 
-bool BblStatusIsFinished() {
-  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(0);
-  return p && p->isFinished();
+float PrinterGetNozzleTemp(uint8_t slot) {
+  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
+  if (!p) {
+    return 0;
+  }
+  return p->getNozzleTemp();
 }
 
-bool BblStatusIsError() {
-  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(0);
-  return !p || p->isError();
+uint8_t PrinterGetProgress(uint8_t slot) {
+  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
+  if (!p) {
+    return 0;
+  }
+  return p->getProgress();
 }
 
-float BblGetNozzleTemp() {
-  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(0);
-  return p ? p->status.nozzle_temp : 0;
+const char* PrinterGetStatusStr(uint8_t slot) {
+  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
+  if (!p) {
+    return "INVALID";
+  }
+  return p->stateStr();
 }
 
-uint8_t BblGetProgress() {
-  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(0);
-  return p ? p->status.progress : 0;
-}
-
-uint8_t BblGetGCodeStatus() {
-  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(0);
-  return p ? p->status.state : PRINTER_STATE_UNKNOWN;
-}
-
-bool BblStatusWeb(void) {
-  return PrinterStatusWeb();
+const char* PrinterGetStatusColorHS(uint8_t slot) {
+  GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);
+  if (!p) {
+    return nullptr;
+  }
+  return p->stateColorHS();
 }
 
 #endif  // USE_GALOPED
