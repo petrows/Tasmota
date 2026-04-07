@@ -28,6 +28,10 @@ void PrinterSetMaxCount(uint8_t count) {
   galoped_printers_max = count;
 }
 
+uint8_t PrinterGetMaxCount() {
+  return galoped_printers_max;
+}
+
 /*********************************************************************************************\
  * Factory - create printer instance by type
 \*********************************************************************************************/

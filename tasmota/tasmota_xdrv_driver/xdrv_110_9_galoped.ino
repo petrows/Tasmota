@@ -91,7 +91,9 @@ bool Xdrv110(uint32_t function) {
     case FUNC_WEB_ADD_HANDLER:
       WebServer_on(PSTR("/" WEB_HANDLE_GALOPED), GalopedPage);
       WebServer_on(PSTR("/" WEB_HANDLE_GALOPED_CFG), GalopedConfigPage);
-      WebServer_on(PSTR("/" WEB_HANDLE_PRINTER_CFG), PrinterConfigPage);
+      if (PrinterGetMaxCount() > 0) {
+        WebServer_on(PSTR("/" WEB_HANDLE_PRINTER_CFG), PrinterConfigPage);
+      }
       break;
 
     case FUNC_WEB_ADD_MAIN_BUTTON:
@@ -99,8 +101,10 @@ bool Xdrv110(uint32_t function) {
       break;
 
     case FUNC_WEB_ADD_BUTTON:
-      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED_CFG), PSTR("Configure Galoped"));
-      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_PRINTER_CFG), PSTR("Configure 3D Printers"));
+      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_GALOPED_CFG), PSTR("Galoped"));
+      if (PrinterGetMaxCount() > 0) {
+        WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_PRINTER_CFG), PSTR("3D Printers"));
+      }
       break;
 
     case FUNC_WEB_SENSOR:

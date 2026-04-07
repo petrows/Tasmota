@@ -211,6 +211,7 @@ static void GalopedReadInfoFile(void) {
     // Standart Galoped CO2 meter
     AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: CO2"));
     galoped_info.display_mode = GALOPED_DISPLAY_CO2;
+    PrinterSetMaxCount(0); // This device do not have 3D Printer option
   }
   if (strcmp(buf, "3dp_tp") == 0) {
     // Standart Galoped CO2 meter
