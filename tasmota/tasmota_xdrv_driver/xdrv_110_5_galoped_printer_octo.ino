@@ -5,8 +5,8 @@
   Copyright (C) 2026 by Petr Golovachev <petro@petro.ws>
   License: GPLv3+
 
-  Polls OctoPrint REST API via raw WiFiClient (not HTTPClientLight,
-  which causes Berry/I2C compile conflicts in Tasmota).
+  Polls OctoPrint REST API via raw WiFiClient / WiFiClientSecure.
+  Supports both HTTP and HTTPS connections.
 
   Endpoints used:
     GET /api/printer  -> tool0 + bed temperatures
@@ -23,6 +23,7 @@
 // HTTP parameters
 #define OCTO_TIMEOUT_MS     5000   // HTTP request timeout
 #define OCTO_DEFAULT_PORT   80
+#define OCTO_DEFAULT_TLS_PORT 443
 #define OCTO_BUF_SIZE       1024   // Max response body size to read
 
 /*********************************************************************************************\
@@ -33,8 +34,10 @@ class GalopedPrinterOctoprint : public GalopedPrinter {
 public:
   GalopedPrinterOctoprint(uint8_t slot) : GalopedPrinter(slot),
     _port(OCTO_DEFAULT_PORT),
+    _use_tls(false),
     _last_poll(0),
-    _fail_count(0)
+    _fail_count(0),
+    _tls(nullptr)
   {
     memset(_host, 0, sizeof(_host));
     memset(_api_key, 0, sizeof(_api_key));
@@ -42,6 +45,10 @@ public:
 
   ~GalopedPrinterOctoprint() override {
     prtDisconnect();
+    if (_tls) {
+      delete _tls;
+      _tls = nullptr;
+    }
   }
 
   uint8_t prtType() override { return PRINTER_TYPE_OCTOPRINT; }
@@ -61,13 +68,19 @@ public:
     ini.getValueInt("printer", "port", port);
     _port = port;
 
-    AddLog(LOG_LEVEL_INFO, PSTR("OCTO[%d]: host=%s:%d"), _slot, _host, _port);
+    bool tls = false;
+    ini.getValueBool("printer", "tls", tls);
+    _use_tls = tls;
+
+    AddLog(LOG_LEVEL_INFO, PSTR("OCTO[%d]: host=%s:%d tls=%d"),
+           _slot, _host, _port, _use_tls);
   }
 
   void prtSaveSettings(String &out) override {
-    out += "host=";    out += _host;    out += "\n";
-    out += "port=";    out += _port;    out += "\n";
-    out += "api_key="; out += _api_key; out += "\n";
+    out += "host=";    out += _host;                   out += "\n";
+    out += "port=";    out += _port;                   out += "\n";
+    out += "api_key="; out += _api_key;                out += "\n";
+    out += "tls=";     out += (_use_tls ? "true" : "false"); out += "\n";
   }
 
   /*********************************************************************************************\
@@ -117,6 +130,12 @@ public:
     WSContentSend_P(PSTR(
       "<p><b>API Key</b><br>"
       "<input name='ok' type='password' maxlength='63' value='%s'></p>"), _api_key);
+
+    // HTTPS checkbox
+    WSContentSend_P(PSTR(
+      "<p><input type='checkbox' name='ot' value='1'%s>"
+      " <b>Use HTTPS</b></p>"),
+      _use_tls ? " checked" : "");
   }
 
   void prtWebFormSave() override {
@@ -127,10 +146,18 @@ public:
 
     WebGetArg(PSTR("op"), tmp, sizeof(tmp));
     _port = atoi(tmp);
-    if (!_port) _port = OCTO_DEFAULT_PORT;
 
     WebGetArg(PSTR("ok"), tmp, sizeof(tmp));
     strlcpy(_api_key, tmp, sizeof(_api_key));
+
+    // Checkbox: present in form data only when checked
+    WebGetArg(PSTR("ot"), tmp, sizeof(tmp));
+    _use_tls = (strlen(tmp) > 0);
+
+    // Set default port based on TLS setting
+    if (!_port) {
+      _port = _use_tls ? OCTO_DEFAULT_TLS_PORT : OCTO_DEFAULT_PORT;
+    }
   }
 
 private:
@@ -138,10 +165,14 @@ private:
   char     _host[40];
   char     _api_key[64];
   uint16_t _port;
+  bool     _use_tls;
 
   // State
   uint32_t _last_poll;
   uint8_t  _fail_count;
+
+  // TLS client (allocated on first use, reused across requests)
+  BearSSL::WiFiClientSecure_light *_tls;
 
   /*********************************************************************************************\
    * Internal helpers
@@ -151,13 +182,38 @@ private:
     return strlen(_host) > 0 && strlen(_api_key) > 0;
   }
 
-  // Raw HTTP GET using WiFiClient - returns response body or empty string on error
+  // Connect a WiFiClient (plain or TLS) and return it
+  // Caller must call client->stop() when done
+  Client* octoConnect() {
+    if (_use_tls) {
+      // Allocate TLS client on first use
+      if (!_tls) {
+        _tls = new BearSSL::WiFiClientSecure_light(2048, 2048);
+        if (!_tls) return nullptr;
+      }
+      _tls->setInsecure();  // Skip cert verification (self-signed OK)
+
+      if (!_tls->connect(_host, _port)) {
+        return nullptr;
+      }
+      return _tls;
+    } else {
+      // Plain HTTP - use stack-allocated WiFiClient
+      // We need a persistent client, so use a static one
+      static WiFiClient plain_client;
+      if (!plain_client.connect(_host, _port)) {
+        return nullptr;
+      }
+      return &plain_client;
+    }
+  }
+
+  // HTTP(S) GET - returns response body or empty string on error
   String octoHttpGet(const char *path) {
-    WiFiClient client;
     String body;
 
-    // Connect
-    if (!client.connect(_host, _port)) {
+    Client *client = octoConnect();
+    if (!client) {
       _fail_count++;
       if (_fail_count > 3) {
         status.connected = false;
@@ -167,27 +223,27 @@ private:
     }
 
     // Send HTTP request
-    client.printf("GET %s HTTP/1.1\r\n", path);
-    client.printf("Host: %s:%d\r\n", _host, _port);
-    client.printf("X-Api-Key: %s\r\n", _api_key);
-    client.print("Connection: close\r\n\r\n");
+    client->printf("GET %s HTTP/1.1\r\n", path);
+    client->printf("Host: %s:%d\r\n", _host, _port);
+    client->printf("X-Api-Key: %s\r\n", _api_key);
+    client->print("Connection: close\r\n\r\n");
 
     // Wait for response
     uint32_t start = millis();
-    while (!client.available() && millis() - start < OCTO_TIMEOUT_MS) {
+    while (!client->available() && millis() - start < OCTO_TIMEOUT_MS) {
       delay(10);
     }
 
-    if (!client.available()) {
-      client.stop();
+    if (!client->available()) {
+      client->stop();
       _fail_count++;
       return body;
     }
 
     // Parse response: skip headers, read body
     bool in_headers = true;
-    while (client.available()) {
-      String line = client.readStringUntil('\n');
+    while (client->available()) {
+      String line = client->readStringUntil('\n');
 
       if (in_headers) {
         // Empty line marks end of headers
@@ -198,7 +254,7 @@ private:
 
         // Check HTTP status code in first line
         if (line.startsWith("HTTP/") && !line.substring(9, 12).equals("200")) {
-          client.stop();
+          client->stop();
           _fail_count++;
           return body;
         }
@@ -210,7 +266,7 @@ private:
       if (body.length() > OCTO_BUF_SIZE) break;
     }
 
-    client.stop();
+    client->stop();
     status.connected = true;
     _fail_count = 0;
     return body;
