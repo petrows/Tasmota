@@ -19,6 +19,16 @@
 struct GalopedPrinter;
 
 /*********************************************************************************************\
+ * Printers counc control
+\*********************************************************************************************/
+
+static uint8_t galoped_printers_max = GALOPED_PRINTER_MAX;
+
+void PrinterSetMaxCount(uint8_t count) {
+  galoped_printers_max = count;
+}
+
+/*********************************************************************************************\
  * Factory - create printer instance by type
 \*********************************************************************************************/
 
@@ -148,13 +158,13 @@ static void PrinterSaveSlot(uint8_t slot) {
 \*********************************************************************************************/
 
 void PrinterInit(void) {
-  for (uint8_t i = 0; i < GALOPED_PRINTER_MAX; i++) {
+  for (uint8_t i = 0; i < galoped_printers_max; i++) {
     PrinterLoadSlot(i);
   }
 }
 
 void PrinterLoop(void) {
-  for (uint8_t i = 0; i < GALOPED_PRINTER_MAX; i++) {
+  for (uint8_t i = 0; i < galoped_printers_max; i++) {
     if (galoped_printers[i]) {
       galoped_printers[i]->prtLoop();
     }
@@ -162,7 +172,7 @@ void PrinterLoop(void) {
 }
 
 void PrinterEverySecond(void) {
-  for (uint8_t i = 0; i < GALOPED_PRINTER_MAX; i++) {
+  for (uint8_t i = 0; i < galoped_printers_max; i++) {
     if (galoped_printers[i]) {
       galoped_printers[i]->prtEverySecond();
     }
@@ -171,7 +181,7 @@ void PrinterEverySecond(void) {
 
 // Get printer instance by slot index (internal use)
 static void* PrinterGet(uint8_t slot) {
-  if (slot >= GALOPED_PRINTER_MAX) return nullptr;
+  if (slot >= galoped_printers_max) return nullptr;
   return galoped_printers[slot];
 }
 
@@ -192,7 +202,7 @@ void PrinterConfigPage(void) {
   if (strlen(tmp)) {
     slot = atoi(tmp);
   }
-  if (slot >= GALOPED_PRINTER_MAX) {
+  if (slot >= galoped_printers_max) {
     slot = 0;
   }
 
@@ -231,7 +241,7 @@ void PrinterConfigPage(void) {
 
   // Slot selector tabs
   WSContentSend_P(PSTR("<div style='text-align:center;margin-bottom:10px'>"));
-  for (uint8_t i = 0; i < GALOPED_PRINTER_MAX; i++) {
+  for (uint8_t i = 0; i < galoped_printers_max; i++) {
     const char *style = (i == slot)
       ? "background:#1fa3ec;color:white;font-weight:bold"
       : "background:#eee;color:#333;border:1px solid #ccc";
@@ -327,7 +337,7 @@ void PrinterConfigPage(void) {
 bool PrinterStatusWeb(void) {
   bool has_data = false;
 
-  for (uint8_t i = 0; i < GALOPED_PRINTER_MAX; i++) {
+  for (uint8_t i = 0; i < galoped_printers_max; i++) {
     GalopedPrinter *p = galoped_printers[i];
     if (!p || !p->status.data_valid) continue;
 
@@ -376,7 +386,7 @@ bool PrinterStatusWeb(void) {
 \*********************************************************************************************/
 
 void PrinterShowJson(void) {
-  for (uint8_t i = 0; i < GALOPED_PRINTER_MAX; i++) {
+  for (uint8_t i = 0; i < galoped_printers_max; i++) {
     GalopedPrinter *p = galoped_printers[i];
     if (!p || !p->status.data_valid) continue;
 
@@ -395,6 +405,11 @@ void PrinterShowJson(void) {
 }
 
 #endif  // USE_WEBSERVER
+
+/*********************************************************************************************\
+ * Common access functions
+\*********************************************************************************************/
+
 
 bool PrinterIsValid(uint8_t slot) {
   GalopedPrinter *p = (GalopedPrinter *)PrinterGet(slot);

@@ -216,16 +216,19 @@ static void GalopedReadInfoFile(void) {
     // Standart Galoped CO2 meter
     AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: 3D Printer (Temperature + Progress)"));
     galoped_info.display_mode = GALOPED_DISPLAY_3DP_TP;
+    PrinterSetMaxCount(1);
   }
   if (strcmp(buf, "3dp_p") == 0) {
     // Standart Galoped CO2 meter
     AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: 3D Printer (Progress)"));
     galoped_info.display_mode = GALOPED_DISPLAY_3DP_P;
+    PrinterSetMaxCount(1);
   }
   if (strcmp(buf, "3dp_pp") == 0) {
     // Standart Galoped CO2 meter
     AddLog(LOG_LEVEL_INFO, PSTR("GAL: Device mode: 3D Printer (Progress + Progress)"));
     galoped_info.display_mode = GALOPED_DISPLAY_3DP_PP;
+    PrinterSetMaxCount(2);
   }
 
   // Reset Gauges info
@@ -336,6 +339,23 @@ void GalopedPage(void) {
   } // End signed block
   WSContentSeparatorIThin();
   // WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Signature" TABLE_INFO_ROW_MID "<b style='color:green;'>OK</b>" TABLE_INFO_ROW_END));
+  const char * galoped_func = "None";
+  switch (galoped_info.display_mode)
+  {
+    case GALOPED_DISPLAY_NONE:
+      galoped_func = "CO2";
+      break;
+    case GALOPED_DISPLAY_3DP_TP:
+      galoped_func = "3D Printer (T+P)";
+      break;
+    case GALOPED_DISPLAY_3DP_P:
+      galoped_func = "3D Printer (P)";
+      break;
+    case GALOPED_DISPLAY_3DP_PP:
+      galoped_func = "3D Printer (P+P)";
+      break;
+  }
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "Function" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), galoped_func);
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Version" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), GalopedFwVerion());
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FW Axis" TABLE_INFO_ROW_MID "%d" TABLE_INFO_ROW_END), GALOPED_AXIS);
   const char * backlight_mode = "?";
