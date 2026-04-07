@@ -44,11 +44,9 @@
 #define GALOPED_RGB_GRADIENT    2  // Static gradient: green-yellow-red always
 #define GALOPED_RGB_MODE_MAX    2
 
-#define GALOPED_SETTINGS_VERSION 0x02
+#define GALOPED_SETTINGS_FILE "/galoped-settings.ini"
 
 struct GalopedSettings {
-  uint32_t crc32;
-  uint32_t version;
   uint8_t  rgb_mode;
 };
 
@@ -68,47 +66,68 @@ static GalopedSettings galoped_settings;
 
 static void GalopedSettingsDefault(void) {
   memset(&galoped_settings, 0x00, sizeof(galoped_settings));
-  galoped_settings.version = GALOPED_SETTINGS_VERSION;
   galoped_settings.rgb_mode = GALOPED_RGB_STATIC;
 }
+
+/*
+  Settings stored as INI file on LittleFS:
+    /galoped_settings.ini
+
+  Format:
+    [settings]
+    rgb_mode=0
+*/
 
 static void GalopedSettingsLoad(bool erase) {
   GalopedSettingsDefault();
 
 #ifdef USE_UFILESYS
-  char filename[20];
-  snprintf_P(filename, sizeof(filename), PSTR(TASM_FILE_DRIVER), XDRV_110);
   if (erase) {
-    TfsDeleteFile(filename);
-  } else if (TfsLoadFile(filename, (uint8_t*)&galoped_settings, sizeof(galoped_settings))) {
-    if (galoped_settings.version != GALOPED_SETTINGS_VERSION) {
-      galoped_settings.version = GALOPED_SETTINGS_VERSION;
-      GalopedSettingsSave();
-    }
-    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Settings loaded, rgb_mode=%d"), galoped_settings.rgb_mode);
-  } else {
-    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Settings file not found, using defaults"));
+    LittleFS.remove(GALOPED_SETTINGS_FILE);
+    AddLog(LOG_LEVEL_INFO, PSTR("GAL: Settings erased"));
+    return;
   }
+
+  File file = LittleFS.open(GALOPED_SETTINGS_FILE, "r");
+  if (!file) {
+    AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Settings file not found, using defaults"));
+    return;
+  }
+
+  IniFile ini(file);
+  int32_t val;
+
+  if (ini.getValueInt("settings", "rgb_mode", val)) {
+    galoped_settings.rgb_mode = val;
+  }
+
+  file.close();
+
+  AddLog(LOG_LEVEL_INFO, PSTR("GAL: Settings loaded, rgb_mode=%d"),
+         galoped_settings.rgb_mode);
 #endif  // USE_UFILESYS
 }
 
 static void GalopedSettingsSave(void) {
 #ifdef USE_UFILESYS
-  uint32_t crc32 = GetCfgCrc32((uint8_t*)&galoped_settings + 4, sizeof(galoped_settings) - 4);
-  if (crc32 != galoped_settings.crc32) {
-    galoped_settings.crc32 = crc32;
-    char filename[20];
-    snprintf_P(filename, sizeof(filename), PSTR(TASM_FILE_DRIVER), XDRV_110);
-    TfsSaveFile(filename, (const uint8_t*)&galoped_settings, sizeof(galoped_settings));
+  String ini;
+  ini += "[settings]\n";
+  ini += "rgb_mode=";  ini += galoped_settings.rgb_mode;  ini += "\n";
+
+  File file = LittleFS.open(GALOPED_SETTINGS_FILE, "w");
+  if (file) {
+    file.print(ini);
+    file.close();
     AddLog(LOG_LEVEL_DEBUG, PSTR("GAL: Settings saved"));
+  } else {
+    AddLog(LOG_LEVEL_ERROR, PSTR("GAL: Settings save failed"));
   }
 #endif  // USE_UFILESYS
 }
 
 static bool GalopedSettingsRestore(void) {
-  XdrvMailbox.data = (char*)&galoped_settings;
-  XdrvMailbox.index = sizeof(galoped_settings);
-  return true;
+  // INI-based settings don't use binary restore
+  return false;
 }
 
 struct GalopedInfo {

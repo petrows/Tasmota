@@ -62,7 +62,7 @@ static void PrinterLoadSlot(uint8_t slot) {
 #ifdef USE_UFILESYS
   // Build filename
   char filename[20];
-  snprintf(filename, sizeof(filename), "/printer_%d.ini", slot);
+  snprintf(filename, sizeof(filename), "/galoped-prt-%d.ini", slot);
 
   // Open INI file
   File file = LittleFS.open(filename, "r");
@@ -109,7 +109,7 @@ static void PrinterLoadSlot(uint8_t slot) {
 static void PrinterSaveSlot(uint8_t slot) {
 #ifdef USE_UFILESYS
   char filename[20];
-  snprintf(filename, sizeof(filename), "/printer_%d.ini", slot);
+  snprintf(filename, sizeof(filename), "/galoped-prt-%d.ini", slot);
 
   GalopedPrinter *printer = galoped_printers[slot];
 
