@@ -319,11 +319,15 @@ private:
 
     // Printer state: "state": "Printing" / "Operational" / "Paused" / etc.
     char state_str[20] = "";
+    uint8_t state_old = status.state;
     if (PrtJsonGetStr(buf, "\"state\"", state_str, sizeof(state_str))) {
       if (!strcmp(state_str, "Printing")) {
         status.state = PRINTER_STATE_RUNNING;
       } else if (!strcmp(state_str, "Operational")) {
-        status.state = PRINTER_STATE_IDLE;
+        // Do not reset, if already have 'finish'
+        if (status.state != PRINTER_STATE_FINISH) {
+          status.state = PRINTER_STATE_IDLE;
+        }
       } else if (!strcmp(state_str, "Paused") || !strcmp(state_str, "Pausing")) {
         status.state = PRINTER_STATE_PAUSE;
       } else if (!strcmp(state_str, "Finishing")) {
@@ -334,6 +338,14 @@ private:
         status.state = PRINTER_STATE_UNKNOWN;
       }
     }
+
+    if (PRINTER_STATE_RUNNING == state_old && PRINTER_STATE_IDLE == status.state) {
+      // State changed from running -> nothing, assume finished
+      status.state = PRINTER_STATE_FINISH;
+      AddLog(LOG_LEVEL_INFO, PSTR("OCTO[%d]: state finished"), _slot);
+    }
+
+    state_old = status.state;
 
     AddLog(LOG_LEVEL_DEBUG,
            PSTR("OCTO[%d]: nozzle=%.0f/%.0f bed=%.0f/%.0f %d%% %s"),
