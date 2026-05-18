@@ -372,6 +372,10 @@ void GalopedPage(void) {
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START "FRAM" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END),
     GalopedFramInitilized() ? "Yes" : "No"
   );
+  // Hardware acceleration enabled on this device?
+  WSContentSend_P(PSTR(TABLE_INFO_ROW_START "RMT driver" TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END),
+    VID6608_RMT ? "Yes" : "No"
+  );
   WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_MAC_ADDRESS TABLE_INFO_ROW_MID "%s" TABLE_INFO_ROW_END), WiFiHelper::macAddress().c_str());
   if (static_cast<uint32_t>(WiFi.localIP()) != 0) {
     WSContentSend_P(PSTR(TABLE_INFO_ROW_START D_IP_ADDRESS TABLE_INFO_ROW_MID "%_I" TABLE_INFO_ROW_END), (uint32_t)WiFi.localIP());

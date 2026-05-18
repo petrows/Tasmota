@@ -21,6 +21,8 @@
 
 #ifdef USE_GALOPED
 
+#define XDRV_110 110
+
 #ifndef ESP32
 #error "Galoped supports the ESP-32 only"
 #endif
