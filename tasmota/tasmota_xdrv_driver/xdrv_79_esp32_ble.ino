@@ -444,13 +444,16 @@ uint64_t BLEScanLastAdvertismentAt = 0;
 uint32_t lastopid = 0; // incrementing uinique opid
 uint32_t BLEResets = 0;
 // controls request of details about one device
-uint8_t BLEDetailsRequest = 0;
+// default 3 (BLEDetails3): stream details (DetailsBLE) for ALL devices out of the box
+uint8_t BLEDetailsRequest = 3;
 uint8_t BLEDetailsMac[6];
 uint8_t BLEAliasListTrigger = 0;
 // triggers send for ALL operations known about
 uint8_t BLEPostMQTTTrigger = 0;
 int BLEMaxAge = 60*10; // 10 minutes
-int BLEAddressFilter = 0;
+// default 2 (BLEAddrFilter 2): allow public/random/resolvable-private addresses
+// (AirTags advertise with random/resolvable addresses)
+int BLEAddressFilter = 2;
 
 
 //////////////////////////////////////////////////
@@ -1183,8 +1186,53 @@ char BLEAdvertismentDetailsJson[MAX_ADVERT_DETAILS];
 uint8_t BLEAdvertismentDetailsJsonSet = 0;
 uint8_t BLEAdvertismentDetailsJsonLost = 0;
 
+// Publish DetailsBLE only for Apple Find My (AirTag) advertisements.
+#ifndef BLE_ESP32_DETAILS_AIRTAG_ONLY
+#define BLE_ESP32_DETAILS_AIRTAG_ONLY 1
+#endif
+
+#if BLE_ESP32_DETAILS_AIRTAG_ONLY
+// True if the raw advertisement carries an Apple Find My frame (manufacturer data
+// FF, company 0x004C, Apple type 0x12) in either state:
+//   nearby   -> OF length 0x02 (owner nearby, no key in payload)
+//   offline  -> OF length 0x19 (separated, key in payload)
+static bool isAirTagAdvertisement(const uint8_t *payload, size_t len){
+  if (!payload) { return false; }
+  size_t i = 0;
+  while (i + 1 < len){
+    uint8_t adlen = payload[i];
+    if (adlen == 0) { break; }
+    size_t adend = i + 1 + adlen;          // one past this AD structure
+    if (adend > len) { break; }
+    uint8_t adtype = payload[i + 1];
+    // Manufacturer Specific Data (0xFF) from Apple (company 0x004C, little-endian)
+    if (adtype == 0xFF && adlen >= 5 && payload[i + 2] == 0x4C && payload[i + 3] == 0x00){
+      size_t j = i + 4;                    // first Apple TLV type byte
+      while (j + 1 < adend){
+        uint8_t atype = payload[j];
+        uint8_t alen  = payload[j + 1];
+        if (atype == 0x12 && (alen == 0x02 || alen == 0x19)){
+          return true;                     // Find My: nearby (0x02) or offline (0x19)
+        }
+        j += 2 + alen;
+      }
+    }
+    i += 1 + adlen;
+  }
+  return false;
+}
+#endif // BLE_ESP32_DETAILS_AIRTAG_ONLY
+
 
 void setDetails(ble_advertisment_t *ad){
+#if BLE_ESP32_DETAILS_AIRTAG_ONLY
+  // DetailsBLE topic carries only AirTag (Apple Find My) adverts - nearby and offline.
+  if (!ad->advertisedDevice ||
+      !isAirTagAdvertisement(ad->advertisedDevice->getPayload().data(),
+                             ad->advertisedDevice->getPayload().size())){
+    return;
+  }
+#endif
   TasAutoMutex localmutex(&BLEOperationsRecursiveMutex, "BLESetDet");
   if (BLEAdvertismentDetailsJsonSet){
     BLEAdvertismentDetailsJsonLost = 1;
